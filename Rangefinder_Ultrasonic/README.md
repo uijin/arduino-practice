@@ -14,7 +14,7 @@
 
 ![schematic](schematic.svg)
 
-| Pin # | SS1106 | KY-008 |
+| Pin # | SH1106 | KY-008 |
 | ----- | ------ | ------ |
 | 1     | GND    | Signal |
 | 2     | VCC    |        |

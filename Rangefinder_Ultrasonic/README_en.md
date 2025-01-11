@@ -16,7 +16,7 @@ This was my first attempt at drawing a circuit diagram using [KiCad](https://www
 
 ![schematic](schematic.svg)
 
-| Pin # | SS1106 | KY-008 |
+| Pin # | SH1106 | KY-008 |
 | ----- | ------ | ------ |
 | 1     | GND    | Signal |
 | 2     | VCC    |        |
