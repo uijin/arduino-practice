@@ -1,0 +1,5 @@
+*-backups/
+libraries/
+.DS_Store
+fp-info-cache
+config_secret.h
