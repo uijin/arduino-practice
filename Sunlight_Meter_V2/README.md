@@ -17,7 +17,7 @@
 
 首先，在 Things 中新增變數 `Panel_Horizontal_Angle`，屬性要設為 Read & Write，這樣才能傳送變數值至裝置上。接著在儀表板新增 Slider，設定與 `Panel_Horizontal_Angle` 連動。
 
-<img src="image-20250112185730336.png" alt="image-20250112185730336" style="zoom: 33%;" />
+<img src="image-20250112185730336.png" alt="image-20250112185730336" style="zoom:33%;" />
 
 <img src="image-20250112185339222.png" alt="image-20250112185339222" style="zoom: 33%;" />
 
