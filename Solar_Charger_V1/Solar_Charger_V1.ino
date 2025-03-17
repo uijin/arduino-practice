@@ -62,36 +62,42 @@ void readAllChannels() {
 /**
  * Updates the OLED display with current measurements
  */
-void displayMeasurements() {
-  char line1[24], line2[24], line3[24], line4[24];
-  unsigned long uptime = millis() / 1000; // Convert to seconds
+ void displayMeasurements() {
+   char line1[24], line2[24], line3[24], line4[24];
+   unsigned long uptime = millis() / 1000; // Convert to seconds
 
-  u8g2.clearBuffer();
-  u8g2.setFont(u8g2_font_ncenB08_tr);
+   // Calculate days, hours, minutes, seconds
+   unsigned long seconds = uptime % 60;
+   unsigned long minutes = (uptime / 60) % 60;
+   unsigned long hours = (uptime / 3600) % 24;
+   unsigned long days = uptime / 86400;
 
-  // Format measurement strings using the pre-collected data
-  snprintf(line1, sizeof(line1), "Solar: %.2fV %.3fA",
-           channelData[SOLAR_PANEL_CHANNEL].voltage,
-           channelData[SOLAR_PANEL_CHANNEL].current);
+   u8g2.clearBuffer();
+   u8g2.setFont(u8g2_font_ncenB08_tr);
 
-  snprintf(line2, sizeof(line2), "Bat1: %.2fV %.3fA",
-           channelData[BATTERY1_CHANNEL].voltage,
-           channelData[BATTERY1_CHANNEL].current);
+   // Format measurement strings using the pre-collected data
+   snprintf(line1, sizeof(line1), "Solar: %.2fV %.3fA",
+            channelData[SOLAR_PANEL_CHANNEL].voltage,
+            channelData[SOLAR_PANEL_CHANNEL].current);
 
-  snprintf(line3, sizeof(line3), "Bat2: %.2fV %.3fA",
-           channelData[BATTERY2_CHANNEL].voltage,
-           channelData[BATTERY2_CHANNEL].current);
+   snprintf(line2, sizeof(line2), "Bat1: %.2fV %.3fA",
+            channelData[BATTERY1_CHANNEL].voltage,
+            channelData[BATTERY1_CHANNEL].current);
 
-  snprintf(line4, sizeof(line4), "Uptime: %lu s", uptime);
+   snprintf(line3, sizeof(line3), "Bat2: %.2fV %.3fA",
+            channelData[BATTERY2_CHANNEL].voltage,
+            channelData[BATTERY2_CHANNEL].current);
 
-  // Position strings on display
-  u8g2.drawStr(0, 14, line1);
-  u8g2.drawStr(0, 28, line2);
-  u8g2.drawStr(0, 42, line3);
-  u8g2.drawStr(0, 56, line4);
+   snprintf(line4, sizeof(line4), "Up: %lud %luh %lum %lus", days, hours, minutes, seconds);
 
-  u8g2.sendBuffer();
-}
+   // Position strings on display
+   u8g2.drawStr(0, 14, line1);
+   u8g2.drawStr(0, 28, line2);
+   u8g2.drawStr(0, 42, line3);
+   u8g2.drawStr(0, 56, line4);
+
+   u8g2.sendBuffer();
+ }
 
 /**
  * Initializes the INA3221 voltage/current sensor
