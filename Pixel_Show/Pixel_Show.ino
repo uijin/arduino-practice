@@ -24,8 +24,15 @@ CRGB leds[NUM_LEDS];
 
 // Function prototypes
 uint8_t getUNShapeIndex(uint8_t x, uint8_t y); // Define before use
+uint8_t get2ShapeIndex(uint8_t x, uint8_t y);
 void drawDiagonalLine(CRGB color);
 void drawHorizontalLine(uint8_t y, CRGB color);
+
+// Function pointer type for index calculation
+typedef uint8_t (*IndexFunction)(uint8_t, uint8_t);
+
+// Function pointer variable
+IndexFunction getLedIndex = getUNShapeIndex; // Default to getUNShapeIndex
 
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
@@ -106,7 +113,7 @@ void setup() {
     while (token != NULL && ledIndex < NUM_LEDS) {
       int img_x = ledIndex % N_X;
       int img_y = ledIndex / N_X;
-      uint8_t ledIndexDisplay = getUNShapeIndex(img_x, img_y);
+      uint8_t ledIndexDisplay = getLedIndex(img_x, img_y);
       int value = atoi(token);
       colors[ledIndexDisplay][colorComponent] = value;
 
@@ -140,7 +147,7 @@ void setup() {
     // --- DISPLAY ON LED PANEL ---
     for (uint8_t y = 0; y < N_Y; y++) {
       for (uint8_t x = 0; x < N_X; x++) {
-        uint8_t ledIndexDisplay = getUNShapeIndex(x, y);
+        uint8_t ledIndexDisplay = getLedIndex(x, y);
 
         // Calculate the colors[ledIndex][0], colors[ledIndex][1] and colors[ledIndex][2] from the color array.
         leds[ledIndexDisplay].r = colors[ledIndexDisplay][0];
@@ -199,12 +206,39 @@ uint8_t getUNShapeIndex(uint8_t x, uint8_t y) {
 
 void drawDiagonalLine(CRGB color) {
   for (uint8_t i = 0; i < min(N_X, N_Y); i++) {
-    leds[getUNShapeIndex(i, i)] = color;
+    leds[getLedIndex(i, i)] = color;
   }
 }
 
 void drawHorizontalLine(uint8_t y, CRGB color) {
   for (uint8_t x = 0; x < N_X; x++) {
-    leds[getUNShapeIndex(x, y)] = color;
+    leds[getLedIndex(x, y)] = color;
+  }
+}
+
+/**
+ * Converts X,Y coordinates to LED index for a horizontally oriented S-shape pattern
+ *
+ * In this pattern, even rows run left to right, odd rows run right to left:
+ *
+ * 0,2  1,2  2,2  ... 14,2  15,2
+ *  ↑     ↑     ↑         ↑     ↑
+ * 15,1 14,1 13,1 ...  1,1   0,1
+ *  ↑     ↑     ↑         ↑     ↑
+ * 0,0  1,0  2,0  ... 14,0  15,0
+ *
+ * @param x X-coordinate (column, 0-based)
+ * @param y Y-coordinate (row, 0-based)
+ * @return The LED index in the strip
+ */
+uint8_t get2ShapeIndex(uint8_t x, uint8_t y) {
+  // Check if y is even or odd to determine direction
+  uint8_t odd_y = y % 2;
+  if (odd_y == 0) {
+    // Even rows (0, 2, 4...) run left to right
+    return y * N_X + x;
+  } else {
+    // Odd rows (1, 3, 5...) run right to left
+    return y * N_X + (N_X - 1 - x);
   }
 }
