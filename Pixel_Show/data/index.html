@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ESP32 Web Server Test</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        margin: 0;
+        background-color: #f0f0f0;
+      }
+      .container {
+        text-align: center;
+        padding: 20px;
+        background-color: white;
+        border-radius: 10px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+      }
+      h1 {
+        color: #0066cc;
+      }
+      p {
+        color: #333;
+      }
+      .esp-info {
+        margin-top: 20px;
+        padding: 10px;
+        background-color: #e6f7ff;
+        border-radius: 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Hello World!</h1>
+      <p>
+        If you can see this page, your ESP32 web server is working correctly.
+      </p>
+
+      <div class="esp-info">
+        <p>ESP32 Web Server</p>
+        <p>IP Address: <span id="ip-address">connecting...</span></p>
+      </div>
+    </div>
+
+    <script>
+      // You could enhance this with actual ESP32 data if you implement an API
+      document.getElementById("ip-address").textContent = window.location.host;
+    </script>
+  </body>
+</html>

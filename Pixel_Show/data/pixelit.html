@@ -1,0 +1,800 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>PixelIt Image Converter</title>
+        <!-- PixelIt library code embedded directly -->
+        <script>
+            /**
+             * PixelIt v1.0.0
+             * https://github.com/giventofly/pixelit
+             *
+             * @license
+             * Copyright (c) 2019 Xavier Gomes
+             *
+             * @preserve
+             * Last update 07/07/2020
+             */
+
+            class PixelIt {
+                constructor(config = {}) {
+                    this.config = {
+                        from: null,
+                        to: null,
+                        scale: 8,
+                        palette: null,
+                        maxHeight: null,
+                        maxWidth: null,
+                        debug: false,
+                        ...config,
+                    };
+                    //save canvas reference or create them
+                    this.art = this.config.to
+                        ? this.config.to
+                        : document.createElement("canvas");
+                    this.artctx = this.art.getContext("2d");
+                    this.from = this.config.from;
+
+                    if (!this.from) {
+                        throw new Error(
+                            "Missing input image source canvas/image",
+                        );
+                    }
+
+                    // Create a temporary canvas for the pixelated image
+                    this.tmpCanvas = document.createElement("canvas");
+                    this.tmpCtx = this.tmpCanvas.getContext("2d");
+
+                    // Set initial dimensions
+                    this.setDimensions();
+
+                    // Set initial scale
+                    this.setScale(this.config.scale);
+
+                    // Add default configuration
+                    this.drawmode = "default";
+                    this.blocksize = 1;
+                    this.alpha = false;
+                }
+
+                setDimensions() {
+                    const { from, maxHeight, maxWidth } = this.config;
+
+                    // Get dimensions from source
+                    let width = from.width || from.naturalWidth;
+                    let height = from.height || from.naturalHeight;
+
+                    // Apply maxWidth if specified and needed
+                    if (maxWidth && width > maxWidth) {
+                        height = Math.round((height * maxWidth) / width);
+                        width = maxWidth;
+                    }
+
+                    // Apply maxHeight if specified and needed
+                    if (maxHeight && height > maxHeight) {
+                        width = Math.round((width * maxHeight) / height);
+                        height = maxHeight;
+                    }
+
+                    // Set canvas dimensions
+                    this.art.width = width;
+                    this.art.height = height;
+                    this.tmpCanvas.width = width;
+                    this.tmpCanvas.height = height;
+
+                    return this;
+                }
+
+                setScale(scale) {
+                    this.config.scale = scale;
+                    return this;
+                }
+
+                setPalette(palette) {
+                    this.config.palette = palette;
+                    return this;
+                }
+
+                setBlockSize(blocksize) {
+                    this.blocksize = blocksize;
+                    return this;
+                }
+
+                setDrawMode(drawmode) {
+                    this.drawmode = drawmode;
+                    return this;
+                }
+
+                setAlpha(alpha = true) {
+                    this.alpha = alpha;
+                    return this;
+                }
+
+                draw() {
+                    const { from, scale, palette, debug } = this.config;
+
+                    // Clear the temporary canvas
+                    this.tmpCtx.clearRect(
+                        0,
+                        0,
+                        this.tmpCanvas.width,
+                        this.tmpCanvas.height,
+                    );
+
+                    // Draw the original image onto the temporary canvas
+                    this.tmpCtx.drawImage(
+                        from,
+                        0,
+                        0,
+                        this.tmpCanvas.width,
+                        this.tmpCanvas.height,
+                    );
+
+                    // Get image data
+                    const imgData = this.tmpCtx.getImageData(
+                        0,
+                        0,
+                        this.tmpCanvas.width,
+                        this.tmpCanvas.height,
+                    );
+                    const data = imgData.data;
+
+                    // Create a pixelated version
+                    for (let y = 0; y < this.tmpCanvas.height; y += scale) {
+                        for (let x = 0; x < this.tmpCanvas.width; x += scale) {
+                            const pixelIndex =
+                                (y * this.tmpCanvas.width + x) * 4;
+
+                            // Get the color of the first pixel in the square
+                            let r = data[pixelIndex];
+                            let g = data[pixelIndex + 1];
+                            let b = data[pixelIndex + 2];
+                            let a = data[pixelIndex + 3];
+
+                            // If palette is provided, find the closest color
+                            if (palette) {
+                                const color = this.matchColor(
+                                    [r, g, b],
+                                    palette,
+                                );
+                                r = color[0];
+                                g = color[1];
+                                b = color[2];
+                            }
+
+                            // Fill the square with the color
+                            this.artctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${this.alpha ? a / 255 : 1})`;
+                            this.artctx.fillRect(
+                                x,
+                                y,
+                                scale * this.blocksize,
+                                scale * this.blocksize,
+                            );
+                        }
+                    }
+
+                    if (debug) {
+                        console.log("Pixelated image created");
+                    }
+
+                    return this;
+                }
+
+                matchColor(color, palette) {
+                    // Find the closest color in the palette
+                    let closestDist = Infinity;
+                    let closestColor = palette[0];
+
+                    for (const p of palette) {
+                        const dist = Math.sqrt(
+                            Math.pow(color[0] - p[0], 2) +
+                                Math.pow(color[1] - p[1], 2) +
+                                Math.pow(color[2] - p[2], 2),
+                        );
+
+                        if (dist < closestDist) {
+                            closestDist = dist;
+                            closestColor = p;
+                        }
+                    }
+
+                    return closestColor;
+                }
+            }
+        </script>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                line-height: 1.6;
+                color: #333;
+                max-width: 1000px;
+                margin: 0 auto;
+                padding: 20px;
+                background-color: #f5f5f5;
+            }
+            .container {
+                background-color: white;
+                border-radius: 8px;
+                padding: 20px;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            }
+            h1 {
+                text-align: center;
+                color: #2c3e50;
+                margin-bottom: 30px;
+            }
+            .canvas-container {
+                display: flex;
+                flex-wrap: wrap;
+                justify-content: center;
+                gap: 20px;
+                margin-bottom: 20px;
+            }
+            canvas {
+                border: 1px solid #ddd;
+                background-color: #fff;
+                max-width: 100%;
+            }
+            .controls {
+                display: flex;
+                flex-direction: column;
+                gap: 15px;
+                margin-bottom: 20px;
+            }
+            .control-group {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 10px;
+                align-items: center;
+            }
+            label {
+                font-weight: bold;
+                min-width: 180px;
+            }
+            input,
+            select {
+                padding: 8px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+            }
+            button {
+                background-color: #3498db;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 4px;
+                cursor: pointer;
+                font-weight: bold;
+                transition: background-color 0.3s;
+            }
+            button:hover {
+                background-color: #2980b9;
+            }
+            .upload-btn {
+                margin-bottom: 20px;
+            }
+            .btn-group {
+                display: flex;
+                justify-content: center;
+                gap: 10px;
+                margin-top: 20px;
+            }
+            #download-btn {
+                background-color: #27ae60;
+            }
+            #download-btn:hover {
+                background-color: #2ecc71;
+            }
+            #palette-container {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 5px;
+                margin-top: 10px;
+            }
+            .palette-color {
+                width: 30px;
+                height: 30px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+            }
+            .palette-input {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            #color-input {
+                width: 60px;
+                height: 30px;
+                padding: 0;
+            }
+            .instructions {
+                background-color: #f8f9fa;
+                border-left: 4px solid #3498db;
+                padding: 15px;
+                border-radius: 4px;
+                margin-bottom: 20px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>PixelIt Image Converter</h1>
+
+            <div class="instructions">
+                <p><strong>How to use:</strong></p>
+                <ol>
+                    <li>Upload an image using the button below</li>
+                    <li>Adjust the pixelation settings to your liking</li>
+                    <li>Click "Apply Pixelation" to see the result</li>
+                    <li>Download your pixelated image when you're satisfied</li>
+                </ol>
+                <ul>
+                    <li>Image will be cropped to a square (1:1 ratio)</li>
+                    <li>Default output size is 16×16 pixels</li>
+                </ul>
+            </div>
+
+            <div class="upload-btn">
+                <input type="file" id="image-upload" accept="image/*" />
+                <button id="paste-btn" style="margin-left: 10px">
+                    Paste Image from Clipboard
+                </button>
+            </div>
+            <div
+                id="paste-instructions"
+                style="margin: 5px 0; color: #666; font-size: 0.9em"
+            >
+                Press Ctrl+V anywhere on the page to paste an image from
+                clipboard
+            </div>
+
+            <div class="canvas-container">
+                <div>
+                    <h3>Original Image</h3>
+                    <canvas
+                        id="canvas-original"
+                        width="400"
+                        height="400"
+                    ></canvas>
+                </div>
+                <div>
+                    <h3>Pixelated Result</h3>
+                    <canvas
+                        id="canvas-result"
+                        width="400"
+                        height="400"
+                    ></canvas>
+                </div>
+            </div>
+
+            <div class="controls">
+                <div class="control-group">
+                    <label for="scale">Pixel Scale:</label>
+                    <input
+                        type="range"
+                        id="scale"
+                        min="2"
+                        max="20"
+                        value="8"
+                        step="1"
+                    />
+                    <span id="scale-value">8</span>
+                </div>
+
+                <div class="control-group">
+                    <label for="palette">Color Palette:</label>
+                    <select id="palette">
+                        <option value="default">Default</option>
+                        <option value="gameboy">GameBoy</option>
+                        <option value="grayscale">Grayscale</option>
+                        <option value="sepia">Sepia</option>
+                        <option value="custom">Custom</option>
+                    </select>
+                </div>
+
+                <div id="custom-palette-controls" style="display: none">
+                    <div class="control-group">
+                        <label>Custom Palette Colors:</label>
+                        <div class="palette-input">
+                            <input type="color" id="color-input" />
+                            <button id="add-color">Add Color</button>
+                        </div>
+                    </div>
+                    <div id="palette-container"></div>
+                    <button
+                        id="clear-palette"
+                        style="margin-top: 10px; background-color: #e74c3c"
+                    >
+                        Clear Palette
+                    </button>
+                </div>
+
+                <div class="control-group">
+                    <label for="block-size">Draw Block Size:</label>
+                    <input
+                        type="number"
+                        id="block-size"
+                        min="1"
+                        max="10"
+                        value="1"
+                    />
+                </div>
+
+                <div class="control-group">
+                    <label for="alpha">Alpha (Transparency):</label>
+                    <input type="checkbox" id="alpha" />
+                </div>
+
+                <div class="control-group">
+                    <label for="output-width">Output Width (px):</label>
+                    <input
+                        type="number"
+                        id="output-width"
+                        min="1"
+                        max="2000"
+                        value="16"
+                    />
+                </div>
+
+                <div class="control-group">
+                    <label for="output-height">Output Height (px):</label>
+                    <input
+                        type="number"
+                        id="output-height"
+                        min="1"
+                        max="2000"
+                        value="16"
+                    />
+                </div>
+
+                <div class="control-group">
+                    <label for="maintain-aspect">Square Crop:</label>
+                    <input type="checkbox" id="maintain-aspect" checked />
+                </div>
+            </div>
+
+            <div class="btn-group">
+                <button id="apply-btn">Apply Pixelation</button>
+                <button id="download-btn">Download Image</button>
+            </div>
+        </div>
+
+        <script>
+            // DOM elements
+            const canvasOriginal = document.getElementById("canvas-original");
+            const canvasResult = document.getElementById("canvas-result");
+            const imageUpload = document.getElementById("image-upload");
+            const scaleInput = document.getElementById("scale");
+            const scaleValue = document.getElementById("scale-value");
+            const paletteSelect = document.getElementById("palette");
+            const blockSizeInput = document.getElementById("block-size");
+            const alphaCheckbox = document.getElementById("alpha");
+            const applyBtn = document.getElementById("apply-btn");
+            const downloadBtn = document.getElementById("download-btn");
+            const colorInput = document.getElementById("color-input");
+            const addColorBtn = document.getElementById("add-color");
+            const paletteContainer =
+                document.getElementById("palette-container");
+            const clearPaletteBtn = document.getElementById("clear-palette");
+            const customPaletteControls = document.getElementById(
+                "custom-palette-controls",
+            );
+            const outputWidthInput = document.getElementById("output-width");
+            const outputHeightInput = document.getElementById("output-height");
+            const maintainAspectCheckbox =
+                document.getElementById("maintain-aspect");
+            const pasteBtn = document.getElementById("paste-btn");
+
+            // Context for canvases
+            const ctxOriginal = canvasOriginal.getContext("2d");
+            const ctxResult = canvasResult.getContext("2d");
+
+            // Default Image
+            let defaultImg = new Image();
+            defaultImg.onload = function () {
+                drawImageToCanvas(this, canvasOriginal);
+            };
+            defaultImg.src = "/api/placeholder/400/400";
+
+            // Set default output size
+            outputWidthInput.value = 16;
+            outputHeightInput.value = 16;
+
+            // PixelIt instance
+            let pixelit = new PixelIt({
+                from: canvasOriginal,
+                to: canvasResult,
+            });
+
+            // Predefined palettes
+            const palettes = {
+                default: null, // null means use the image's colors
+                gameboy: [
+                    [155, 188, 15],
+                    [139, 172, 15],
+                    [48, 98, 48],
+                    [15, 56, 15],
+                ],
+                grayscale: [
+                    [255, 255, 255],
+                    [200, 200, 200],
+                    [150, 150, 150],
+                    [100, 100, 100],
+                    [50, 50, 50],
+                    [0, 0, 0],
+                ],
+                sepia: [
+                    [255, 240, 217],
+                    [236, 207, 167],
+                    [196, 149, 95],
+                    [141, 93, 53],
+                    [83, 49, 24],
+                    [37, 22, 11],
+                ],
+                custom: [],
+            };
+
+            // Event listeners
+            imageUpload.addEventListener("change", handleImageUpload);
+            scaleInput.addEventListener("input", updateScaleValue);
+            paletteSelect.addEventListener("change", handlePaletteChange);
+            applyBtn.addEventListener("click", applyPixelation);
+            downloadBtn.addEventListener("click", downloadImage);
+            addColorBtn.addEventListener("click", addCustomColor);
+            clearPaletteBtn.addEventListener("click", clearCustomPalette);
+            outputWidthInput.addEventListener("input", handleOutputSizeChange);
+            outputHeightInput.addEventListener("input", handleOutputSizeChange);
+            maintainAspectCheckbox.addEventListener("change", applyPixelation);
+            pasteBtn.addEventListener("click", () => {
+                navigator.clipboard
+                    .read()
+                    .then(handleClipboardItems)
+                    .catch((err) =>
+                        console.error("Failed to read clipboard: ", err),
+                    );
+            });
+
+            // Add paste event listener to the document
+            document.addEventListener("paste", (e) => {
+                if (e.clipboardData.items) {
+                    handleClipboardItems(e.clipboardData.items);
+                }
+            });
+
+            // Initial setup
+            updateScaleValue();
+
+            // Functions
+            function handleImageUpload(e) {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = function (event) {
+                        const img = new Image();
+                        img.onload = function () {
+                            drawImageToCanvas(this, canvasOriginal);
+                        };
+                        img.src = event.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                }
+            }
+
+            function drawImageToCanvas(img, canvas) {
+                // Make a square crop of the image
+                const size = Math.min(img.width, img.height);
+                const offsetX = (img.width - size) / 2;
+                const offsetY = (img.height - size) / 2;
+
+                // Set canvas to square dimensions
+                canvas.width = size;
+                canvas.height = size;
+
+                // Draw the cropped square image to canvas
+                canvas.getContext("2d").drawImage(
+                    img,
+                    offsetX,
+                    offsetY,
+                    size,
+                    size, // Source rectangle
+                    0,
+                    0,
+                    size,
+                    size, // Destination rectangle
+                );
+
+                // Set result canvas size to default 16x16
+                const outputWidth = parseInt(outputWidthInput.value);
+                const outputHeight = parseInt(outputHeightInput.value);
+                canvasResult.width = outputWidth;
+                canvasResult.height = outputHeight;
+
+                // Reset pixelit with new dimensions
+                pixelit = new PixelIt({
+                    from: canvasOriginal,
+                    to: canvasResult,
+                });
+
+                // Apply pixelation to show immediate result
+                applyPixelation();
+            }
+
+            function updateScaleValue() {
+                scaleValue.textContent = scaleInput.value;
+            }
+
+            function handlePaletteChange() {
+                const selectedPalette = paletteSelect.value;
+
+                if (selectedPalette === "custom") {
+                    customPaletteControls.style.display = "block";
+                } else {
+                    customPaletteControls.style.display = "none";
+                }
+            }
+
+            function applyPixelation() {
+                const scale = parseInt(scaleInput.value);
+                const blockSize = parseInt(blockSizeInput.value);
+                const withAlpha = alphaCheckbox.checked;
+                const selectedPalette = paletteSelect.value;
+                const outputWidth = parseInt(outputWidthInput.value);
+                const outputHeight = parseInt(outputHeightInput.value);
+
+                // Create a temporary canvas to handle the intermediate pixelation
+                const tempCanvas = document.createElement("canvas");
+                const tempCtx = tempCanvas.getContext("2d");
+
+                // Set the intermediate canvas to the same size as the original
+                tempCanvas.width = canvasOriginal.width;
+                tempCanvas.height = canvasOriginal.height;
+
+                // Create a PixelIt instance for the intermediate step
+                const tempPixelIt = new PixelIt({
+                    from: canvasOriginal,
+                    to: tempCanvas,
+                });
+
+                // Configure pixelation
+                tempPixelIt.setScale(scale).setBlockSize(blockSize);
+
+                if (withAlpha) {
+                    tempPixelIt.setAlpha();
+                }
+
+                if (selectedPalette !== "default") {
+                    tempPixelIt.setPalette(palettes[selectedPalette]);
+                }
+
+                // Draw the pixelated image to the temp canvas
+                tempPixelIt.draw();
+
+                // Resize result canvas to requested dimensions
+                canvasResult.width = outputWidth;
+                canvasResult.height = outputHeight;
+
+                // Clear the result canvas
+                ctxResult.clearRect(
+                    0,
+                    0,
+                    canvasResult.width,
+                    canvasResult.height,
+                );
+
+                // Draw the pixelated image from the temp canvas to the result canvas with the desired dimensions
+                ctxResult.drawImage(
+                    tempCanvas,
+                    0,
+                    0,
+                    tempCanvas.width,
+                    tempCanvas.height,
+                    0,
+                    0,
+                    outputWidth,
+                    outputHeight,
+                );
+            }
+
+            function handleOutputSizeChange(e) {
+                if (maintainAspectCheckbox.checked) {
+                    // Keep 1:1 ratio
+                    if (e.target.id === "output-width") {
+                        const newWidth = parseInt(outputWidthInput.value);
+                        outputHeightInput.value = newWidth;
+                    } else {
+                        const newHeight = parseInt(outputHeightInput.value);
+                        outputWidthInput.value = newHeight;
+                    }
+                }
+
+                // Apply the changes immediately
+                applyPixelation();
+            }
+
+            function downloadImage() {
+                const link = document.createElement("a");
+                link.download = "pixelated-image.png";
+                link.href = canvasResult.toDataURL();
+                link.click();
+            }
+
+            function handleClipboardItems(items) {
+                // Look for image content in the clipboard
+                for (let i = 0; i < items.length; i++) {
+                    if (items[i].type.indexOf("image") !== -1) {
+                        // Get the image as a Blob
+                        const blob = items[i].getAsFile();
+
+                        if (blob) {
+                            // Convert the blob to an Object URL
+                            const url = URL.createObjectURL(blob);
+
+                            // Create an image element
+                            const img = new Image();
+                            img.onload = function () {
+                                // Draw the image to the canvas
+                                drawImageToCanvas(this, canvasOriginal);
+                                // Release the Object URL
+                                URL.revokeObjectURL(url);
+                            };
+                            img.src = url;
+                            return;
+                        }
+                    }
+                }
+
+                alert(
+                    "No image found in clipboard. Please copy an image first.",
+                );
+            }
+
+            function addCustomColor() {
+                const color = colorInput.value;
+                const rgb = hexToRgb(color);
+
+                // Add color to custom palette
+                palettes.custom.push([rgb.r, rgb.g, rgb.b]);
+
+                // Update palette display
+                updatePaletteDisplay();
+            }
+
+            function updatePaletteDisplay() {
+                paletteContainer.innerHTML = "";
+
+                palettes.custom.forEach((color, index) => {
+                    const colorEl = document.createElement("div");
+                    colorEl.className = "palette-color";
+                    colorEl.style.backgroundColor = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
+                    colorEl.dataset.index = index;
+
+                    // Add click event to remove color
+                    colorEl.addEventListener("click", function () {
+                        palettes.custom.splice(this.dataset.index, 1);
+                        updatePaletteDisplay();
+                    });
+
+                    paletteContainer.appendChild(colorEl);
+                });
+            }
+
+            function clearCustomPalette() {
+                palettes.custom = [];
+                updatePaletteDisplay();
+            }
+
+            function hexToRgb(hex) {
+                // Remove # if present
+                hex = hex.replace("#", "");
+
+                // Parse hex values
+                const r = parseInt(hex.substring(0, 2), 16);
+                const g = parseInt(hex.substring(2, 4), 16);
+                const b = parseInt(hex.substring(4, 6), 16);
+
+                return { r, g, b };
+            }
+        </script>
+    </body>
+</html>
