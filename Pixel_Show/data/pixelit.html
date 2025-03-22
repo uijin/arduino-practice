@@ -457,6 +457,7 @@
             <div class="btn-group">
                 <button id="apply-btn">Apply Pixelation</button>
                 <button id="download-btn">Download Image</button>
+                <button id="send-btn">Send Image to Server</button>
             </div>
         </div>
 
@@ -485,6 +486,7 @@
             const maintainAspectCheckbox =
                 document.getElementById("maintain-aspect");
             const pasteBtn = document.getElementById("paste-btn");
+            const sendBtn = document.getElementById("send-btn"); // Added
 
             // Context for canvases
             const ctxOriginal = canvasOriginal.getContext("2d");
@@ -495,7 +497,7 @@
             defaultImg.onload = function () {
                 drawImageToCanvas(this, canvasOriginal);
             };
-            defaultImg.src = "/api/placeholder/400/400";
+            defaultImg.src = "";
 
             // Set default output size
             outputWidthInput.value = 16;
@@ -565,6 +567,8 @@
             // Initial setup
             updateScaleValue();
 
+            sendBtn.addEventListener("click", sendImageToServer); // Added event listener
+
             // Functions
             function handleImageUpload(e) {
                 const file = e.target.files[0];
@@ -604,7 +608,7 @@
                     size, // Destination rectangle
                 );
 
-                // Set result canvas size to default 16x16
+                // Set result canvas size to output size
                 const outputWidth = parseInt(outputWidthInput.value);
                 const outputHeight = parseInt(outputHeightInput.value);
                 canvasResult.width = outputWidth;
@@ -642,6 +646,10 @@
                 const outputWidth = parseInt(outputWidthInput.value);
                 const outputHeight = parseInt(outputHeightInput.value);
 
+                // Set output width and height
+                canvasResult.width = outputWidth;
+                canvasResult.height = outputHeight;
+
                 // Create a temporary canvas to handle the intermediate pixelation
                 const tempCanvas = document.createElement("canvas");
                 const tempCtx = tempCanvas.getContext("2d");
@@ -671,6 +679,7 @@
                 tempPixelIt.draw();
 
                 // Resize result canvas to requested dimensions
+
                 canvasResult.width = outputWidth;
                 canvasResult.height = outputHeight;
 
@@ -794,6 +803,53 @@
                 const b = parseInt(hex.substring(4, 6), 16);
 
                 return { r, g, b };
+            }
+
+            function sendImageToServer() {
+                // Added function to send image data
+                const canvas = document.getElementById("canvas-result");
+                const ctx = canvas.getContext("2d");
+                const imgData = ctx.getImageData(
+                    0,
+                    0,
+                    canvas.width,
+                    canvas.height,
+                );
+                const data = imgData.data;
+
+                let pixelData = "";
+                for (let i = 0; i < data.length; i += 4) {
+                    const r = data[i];
+                    const g = data[i + 1];
+                    const b = data[i + 2];
+                    pixelData += r + "," + g + "," + b;
+                    if (i < data.length - 4) {
+                        pixelData += ",";
+                    }
+                }
+
+                var xhr = new XMLHttpRequest();
+                xhr.open("POST", "/upload", true);
+                xhr.setRequestHeader(
+                    "Content-type",
+                    "application/x-www-form-urlencoded",
+                );
+
+                xhr.onload = function () {
+                    if (xhr.status == 200) {
+                        alert("Image uploaded successfully!");
+                    } else {
+                        alert(
+                            "Image upload failed! Status code: " + xhr.status,
+                        );
+                    }
+                };
+
+                xhr.onerror = function () {
+                    alert("Network error occurred while uploading image!");
+                };
+
+                xhr.send("imData=" + encodeURIComponent(pixelData));
             }
         </script>
     </body>
