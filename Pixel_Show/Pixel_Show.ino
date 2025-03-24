@@ -16,7 +16,7 @@
 #define N_X 16            // Number of LEDs in X direction (width of the matrix)
 #define N_Y 16            // Number of LEDs in Y direction (height of the matrix)
 #define NUM_LEDS N_X * N_Y // Total number of LEDs in the matrix (256 LEDs)
-#define BRIGHTNESS 5      // LED brightness level (0-255)
+#define BRIGHTNESS 20      // LED brightness level (0-255)
 #define DELAY_MS 10       // Shorten delay for faster refresh
 
 // Define the LED array that will hold color values for each LED
@@ -63,11 +63,18 @@ void setup() {
 
   // LED Panel Test
   // Comment out these lines after testing
-  drawDiagonalLine(CRGB::Red);
-  drawHorizontalLine(8, CRGB::Blue);
+  // drawDiagonalLine(CRGB::Red);
+  drawHorizontalLine(0, CRGB::Red);
+  drawHorizontalLine(1, CRGB::Green);
+  drawHorizontalLine(2, CRGB::Blue);
+
   FastLED.show();
-  delay(5000); // Display for 5 seconds
+  delay(3000); // Display for 5 seconds
   FastLED.clear();
+
+
+  drawIpAddress(WiFi.localIP());
+
   FastLED.show();
 
   // Route for root / web page
@@ -240,5 +247,45 @@ uint8_t get2ShapeIndex(uint8_t x, uint8_t y) {
   } else {
     // Odd rows (1, 3, 5...) run right to left
     return y * N_X + (N_X - 1 - x);
+  }
+}
+
+void draw3x3Digit(uint8_t offset_x, uint8_t offset_y, int digit, CRGB color) {
+  const uint8_t DIGIT_WIDTH = 3;
+  for (uint8_t i=0; i<digit; i++) {
+    uint8_t index = getLedIndex(i%DIGIT_WIDTH+offset_x, i/DIGIT_WIDTH+offset_y);
+    leds[index] = color;
+  }
+}
+
+/**
+ * Show IP address on LED panel, using draw3x3Digit().
+ * e.g. 192.168.50.14
+ * -> draw3x3Digit(0, 0, 1, Red), draw3x3Digit(3, 0, 9, Green), draw3x3Digit(6, 0, 2, Blue)
+ * -> draw3x3Digit(0, 3, 1, Red), draw3x3Digit(3, 3, 6, Green), draw3x3Digit(6, 3, 8, Blue)
+ * -> draw3x3Digit(0, 6, 0, Red), draw3x3Digit(3, 3, 5, Green), draw3x3Digit(6, 3, 0, Blue)
+ * -> draw3x3Digit(0, 9, 0, Red), draw3x3Digit(3, 3, 1, Green), draw3x3Digit(6, 3, 4, Blue)
+ */
+void drawIpAddress(IPAddress ip) {
+  // CRGB colors[] = {CRGB::Red, CRGB::Green, CRGB::Blue}; // Example colors
+  // uint8_t colorIndex = 0;
+  uint8_t xOffset = 0;
+  uint8_t yOffset = 0;
+
+  for (int i = 0; i < 4; i++) {
+    int digit1 = ip[i] / 100;
+    int digit2 = (ip[i] % 100) / 10;
+    int digit3 = ip[i] % 10;
+
+    draw3x3Digit(xOffset, yOffset, digit1, CRGB::Red);
+    xOffset += 3;
+    draw3x3Digit(xOffset, yOffset, digit2, CRGB::Green);
+    xOffset += 3;
+    draw3x3Digit(xOffset, yOffset, digit3, CRGB::Blue);
+    xOffset += 3;
+
+    xOffset = 0;
+    yOffset += 4;
+    // colorIndex += 1;
   }
 }
