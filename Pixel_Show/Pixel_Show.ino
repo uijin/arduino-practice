@@ -4,39 +4,39 @@
 #include <FastLED.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
-#include <string.h> // Include for strlen, strtok
+#include <string.h>  // Include for strlen, strtok
 
 // WiFi credentials
 // const char* ssid = "YOUR_WIFI_SSID";
 // const char* password = "YOUR_WIFI_PASSWORD";
-#include "config_secret.h" // Include the header file for secret configuration (WiFi credentials, etc.)
+#include "config_secret.h"  // Include the header file for secret configuration (WiFi credentials, etc.)
 
 // Pin configuration and LED matrix dimensions
 #define LED_PIN 18         // Digital pin connected to the WS2812B data line
-#define N_X 16            // Number of LEDs in X direction (width of the matrix)
-#define N_Y 16            // Number of LEDs in Y direction (height of the matrix)
-#define NUM_LEDS N_X * N_Y // Total number of LEDs in the matrix (256 LEDs)
+#define N_X 16             // Number of LEDs in X direction (width of the matrix)
+#define N_Y 16             // Number of LEDs in Y direction (height of the matrix)
+#define NUM_LEDS N_X *N_Y  // Total number of LEDs in the matrix (256 LEDs)
 #define BRIGHTNESS 20      // LED brightness level (0-255)
-#define DELAY_MS 10       // Shorten delay for faster refresh
+#define DELAY_MS 10        // Shorten delay for faster refresh
 
 // Define the LED array that will hold color values for each LED
 CRGB leds[NUM_LEDS];
 
 // Function prototypes
-uint8_t getUNShapeIndex(uint8_t x, uint8_t y); // Define before use
+uint8_t getUNShapeIndex(uint8_t x, uint8_t y);  // Define before use
 uint8_t get2ShapeIndex(uint8_t x, uint8_t y);
 void drawDiagonalLine(CRGB color);
 void drawHorizontalLine(uint8_t y, CRGB color);
-bool saveImageToLittleFS(const String& filename, int colors[][3], uint8_t numXPixels, uint8_t numYPixels);
-bool loadImageFromLittleFS(const String& filename, int colors[][3], uint8_t &numXPixels, uint8_t &numYPixels);
+bool saveImageToLittleFS(const String &filename, int colors[][3], uint8_t numXPixels, uint8_t numYPixels);
+bool loadImageFromLittleFS(const String &filename, int colors[][3], uint8_t &numXPixels, uint8_t &numYPixels);
 String listImagesOnLittleFS();
-bool deleteImageFromLittleFS(const String& filename);
+bool deleteImageFromLittleFS(const String &filename);
 
 // Function pointer type for index calculation
 typedef uint8_t (*IndexFunction)(uint8_t, uint8_t);
 
 // Function pointer variable
-IndexFunction getLedIndex = getUNShapeIndex; // Default to getUNShapeIndex
+IndexFunction getLedIndex = getUNShapeIndex;  // Default to getUNShapeIndex
 
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
@@ -73,7 +73,7 @@ void setup() {
   drawHorizontalLine(2, CRGB::Blue);
 
   FastLED.show();
-  delay(3000); // Display for 5 seconds
+  delay(3000);  // Display for 5 seconds
   FastLED.clear();
 
 
@@ -83,7 +83,7 @@ void setup() {
 
   // Route for root / web page
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(LittleFS, "/pixelit.html", "text/html"); // Make the root redirect to pixelit.html
+    request->send(LittleFS, "/pixelit.html", "text/html");  // Make the root redirect to pixelit.html
   });
 
   // Route for pixelit.html
@@ -138,7 +138,7 @@ void setup() {
     }
 
 
-    if(ledIndex != NUM_LEDS) {
+    if (ledIndex != NUM_LEDS) {
       Serial.print("Error: Not enough color data received. Expected data for ");
       Serial.print(NUM_LEDS);
       Serial.print(" LEDs. Received data for ");
@@ -173,7 +173,7 @@ void setup() {
       }
     }
 
-    FastLED.show(); // Send the data to the LEDs
+    FastLED.show();  // Send the data to the LEDs
     request->send(200, "text/plain", "Image received, saved, and displayed!");
   });
 
@@ -198,7 +198,7 @@ void setup() {
       }
     }
 
-    FastLED.show(); // Send the data to the LEDs
+    FastLED.show();  // Send the data to the LEDs
   }
 }
 
@@ -273,8 +273,8 @@ uint8_t get2ShapeIndex(uint8_t x, uint8_t y) {
 
 void draw3x3Digit(uint8_t offset_x, uint8_t offset_y, int digit, CRGB color) {
   const uint8_t DIGIT_WIDTH = 3;
-  for (uint8_t i=0; i<digit; i++) {
-    uint8_t index = getLedIndex(i%DIGIT_WIDTH+offset_x, i/DIGIT_WIDTH+offset_y);
+  for (uint8_t i = 0; i < digit; i++) {
+    uint8_t index = getLedIndex(i % DIGIT_WIDTH + offset_x, i / DIGIT_WIDTH + offset_y);
     leds[index] = color;
   }
 }
@@ -316,7 +316,7 @@ void drawIpAddress(IPAddress ip) {
 /**
  * Saves the processed image data to LittleFS in a binary format, along with metadata about the image dimensions.
  */
-bool saveImageToLittleFS(const String& filename, int colors[][3], uint8_t numXPixels, uint8_t numYPixels) {
+bool saveImageToLittleFS(const String &filename, int colors[][3], uint8_t numXPixels, uint8_t numYPixels) {
   File file = LittleFS.open("/" + filename, "w");
 
   if (!file) {
@@ -325,10 +325,10 @@ bool saveImageToLittleFS(const String& filename, int colors[][3], uint8_t numXPi
   }
 
   // Write 6-byte header
-  file.write(0x50); // 'P'
-  file.write(0x58); // 'X'
-  file.write(0x4C); // 'L'
-  file.write(0x01); // File Schema Version 1
+  file.write(0x50);  // 'P'
+  file.write(0x58);  // 'X'
+  file.write(0x4C);  // 'L'
+  file.write(0x01);  // File Schema Version 1
   file.write(numXPixels);
   file.write(numYPixels);
 
@@ -336,9 +336,9 @@ bool saveImageToLittleFS(const String& filename, int colors[][3], uint8_t numXPi
 
   // Write pixel data (R, G, B for each pixel)
   for (uint16_t i = 0; i < num_leds; i++) {
-    file.write(colors[i][0]); // Red
-    file.write(colors[i][1]); // Green
-    file.write(colors[i][2]); // Blue
+    file.write(colors[i][0]);  // Red
+    file.write(colors[i][1]);  // Green
+    file.write(colors[i][2]);  // Blue
   }
 
   file.close();
@@ -351,7 +351,7 @@ bool saveImageToLittleFS(const String& filename, int colors[][3], uint8_t numXPi
 /**
  * Loads image data from a LittleFS file (in the defined binary format) into the colors array and retrieves the image dimensions.
  */
-bool loadImageFromLittleFS(const String& filename, int colors[][3], uint8_t &numXPixels, uint8_t &numYPixels) {
+bool loadImageFromLittleFS(const String &filename, int colors[][3], uint8_t &numXPixels, uint8_t &numYPixels) {
   File file = LittleFS.open("/" + filename, "r");
 
   if (!file) {
@@ -382,16 +382,16 @@ bool loadImageFromLittleFS(const String& filename, int colors[][3], uint8_t &num
 
   uint16_t num_leds = numXPixels * numYPixels;
   if (num_leds != NUM_LEDS) {
-      Serial.print("Loaded data (X=");
-      Serial.print(numXPixels);
-      Serial.print(", Y=");
-      Serial.print(numYPixels);
-      Serial.print(") does not match current LED data (X=");
-      Serial.print(N_X);
-      Serial.print(", Y=");
-      Serial.print(N_Y);
-      Serial.println(")");
-      // TODO: Realloc the memory of color and leds array if needed.
+    Serial.print("Loaded data (X=");
+    Serial.print(numXPixels);
+    Serial.print(", Y=");
+    Serial.print(numYPixels);
+    Serial.print(") does not match current LED data (X=");
+    Serial.print(N_X);
+    Serial.print(", Y=");
+    Serial.print(N_Y);
+    Serial.println(")");
+    // TODO: Realloc the memory of color and leds array if needed.
   }
 
   // Read pixel data
@@ -402,9 +402,9 @@ bool loadImageFromLittleFS(const String& filename, int colors[][3], uint8_t &num
       return false;
     }
 
-    colors[i][0] = file.read(); // Red
-    colors[i][1] = file.read(); // Green
-    colors[i][2] = file.read(); // Blue
+    colors[i][0] = file.read();  // Red
+    colors[i][1] = file.read();  // Green
+    colors[i][2] = file.read();  // Blue
   }
 
   file.close();
@@ -441,7 +441,7 @@ String listImagesOnLittleFS() {
 /**
  * Deletes an image file from LittleFS.
  */
-bool deleteImageFromLittleFS(const String& filename) {
+bool deleteImageFromLittleFS(const String &filename) {
   String fullPath = "/" + filename;
 
   if (LittleFS.remove(fullPath.c_str())) {
