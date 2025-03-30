@@ -16,7 +16,7 @@
 #define N_X 16             // Number of LEDs in X direction (width of the matrix)
 #define N_Y 16             // Number of LEDs in Y direction (height of the matrix)
 #define NUM_LEDS N_X *N_Y  // Total number of LEDs in the matrix (256 LEDs)
-#define BRIGHTNESS 20      // LED brightness level (0-255)
+#define BRIGHTNESS 10      // LED brightness level (0-255)
 #define DELAY_MS 10        // Shorten delay for faster refresh
 
 // Define the LED array that will hold color values for each LED
@@ -63,6 +63,8 @@ void setup() {
 
   FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);
   FastLED.setBrightness(BRIGHTNESS);
+  // FastLED.setCorrection(TypicalPixelString);
+  FastLED.setTemperature(Halogen);
   FastLED.clear();
   FastLED.show();
 
@@ -293,8 +295,6 @@ void drawIpAddress(IPAddress ip) {
   }
 }
 
-// --- NEW FUNCTIONS ---
-
 /**
  * Saves the processed image data to LittleFS in a binary format, along with metadata about the image dimensions.
  */
@@ -450,5 +450,3 @@ void displayImage(uint8_t colors[][3]) {
   }
   FastLED.show();
 }
-
-// --- END NEW FUNCTIONS ---
