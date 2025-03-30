@@ -213,17 +213,20 @@
                 padding: 20px;
                 background-color: #f5f5f5;
             }
+
             .container {
                 background-color: white;
                 border-radius: 8px;
                 padding: 20px;
                 box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
             }
+
             h1 {
                 text-align: center;
                 color: #2c3e50;
                 margin-bottom: 30px;
             }
+
             .canvas-container {
                 display: flex;
                 flex-wrap: wrap;
@@ -232,33 +235,39 @@
                 gap: 20px;
                 margin-bottom: 20px;
             }
+
             canvas {
                 border: 1px solid #ddd;
                 background-color: #fff;
                 max-width: 100%;
             }
+
             .controls {
                 display: flex;
                 flex-direction: column;
                 gap: 15px;
                 margin-bottom: 20px;
             }
+
             .control-group {
                 display: flex;
                 flex-wrap: wrap;
                 gap: 10px;
                 align-items: center;
             }
+
             label {
                 font-weight: bold;
                 min-width: 180px;
             }
+
             input,
             select {
                 padding: 8px;
                 border: 1px solid #ddd;
                 border-radius: 4px;
             }
+
             button {
                 background-color: #3498db;
                 color: white;
@@ -269,46 +278,56 @@
                 font-weight: bold;
                 transition: background-color 0.3s;
             }
+
             button:hover {
                 background-color: #2980b9;
             }
+
             .upload-btn {
                 margin-bottom: 20px;
             }
+
             .btn-group {
                 display: flex;
                 justify-content: center;
                 gap: 10px;
                 margin-top: 20px;
             }
+
             #download-btn {
                 background-color: #27ae60;
             }
+
             #download-btn:hover {
                 background-color: #2ecc71;
             }
+
             #palette-container {
                 display: flex;
                 flex-wrap: wrap;
                 gap: 5px;
                 margin-top: 10px;
             }
+
             .palette-color {
                 width: 30px;
                 height: 30px;
                 border: 1px solid #ddd;
                 border-radius: 4px;
             }
+
             .palette-input {
                 display: flex;
                 align-items: center;
                 gap: 10px;
             }
+
             #color-input {
                 width: 60px;
                 height: 30px;
                 padding: 0;
             }
+
             .instructions {
                 background-color: #f8f9fa;
                 border-left: 4px solid #3498db;
@@ -318,6 +337,7 @@
             }
         </style>
     </head>
+
     <body>
         <div class="container">
             <h1>PixelIt Image Converter</h1>
@@ -456,12 +476,30 @@
                 </div>
             </div>
 
+            <!-- NEW: Filename Input -->
+            <div class="control-group">
+                <label for="filename">Filename:</label>
+                <input
+                    type="text"
+                    id="filename"
+                    placeholder="Enter filename"
+                    value="my_image"
+                />
+            </div>
+
             <div class="btn-group">
                 <button id="apply-btn">Apply Pixelation</button>
                 <button id="download-btn">Download Image</button>
                 <button id="send-btn">Send Image to Server</button>
                 <button id="save-btn">Save to LittleFS</button>
+                <button id="list-files-btn">List Files</button>
+                <button id="delete-file-btn">Delete File</button>
             </div>
+            <div id="file-management">
+                <label for="file-list">Available Files:</label>
+                <select id="file-list"></select>
+            </div>
+            <div id="message"></div>
         </div>
 
         <script>
@@ -491,6 +529,14 @@
             const pasteBtn = document.getElementById("paste-btn");
             const sendBtn = document.getElementById("send-btn"); // Added
             const saveBtn = document.getElementById("save-btn"); // Add save button
+            const filenameInput = document.getElementById("filename"); // Filename input
+            const listFilesBtn = document.getElementById("list-files-btn");
+            const deleteFileBtn = document.getElementById("delete-file-btn");
+            const fileListSelect = document.getElementById("file-list");
+            const messageDiv = document.getElementById("message");
+
+            const fileManagementDiv =
+                document.getElementById("file-management");
 
             // Context for canvases
             const ctxOriginal = canvasOriginal.getContext("2d");
@@ -576,6 +622,9 @@
 
             sendBtn.addEventListener("click", sendImageToServer); // Added event listener
             saveBtn.addEventListener("click", sendSaveRequest); // Add save button event listener
+            listFilesBtn.addEventListener("click", listFiles);
+            deleteFileBtn.addEventListener("click", deleteFile);
+            fileManagementDiv.style.display = "none"; // hide at startup
 
             // Functions
             function handleImageUpload(e) {
@@ -810,7 +859,11 @@
                 const g = parseInt(hex.substring(2, 4), 16);
                 const b = parseInt(hex.substring(4, 6), 16);
 
-                return { r, g, b };
+                return {
+                    r,
+                    g,
+                    b,
+                };
             }
 
             function getPixelData(canvas) {
@@ -870,11 +923,20 @@
                 // Function to send the save request
                 const canvas = document.getElementById("canvas-result");
                 const pixelData = getPixelData(canvas);
+                const filename = filenameInput.value;
 
                 if (!pixelData) {
                     alert("No image data to save.  Apply pixelation first.");
                     return;
                 }
+
+                if (!filename) {
+                    alert("Please enter a filename.");
+                    return;
+                }
+
+                // Remove invalid filename characters
+                const validFilename = filename.replace(/[^a-zA-Z0-9_-]/g, "_");
 
                 var xhr = new XMLHttpRequest();
                 xhr.open("POST", "/save", true);
@@ -895,7 +957,65 @@
                     alert("Network error occurred while saving image!");
                 };
 
-                xhr.send("imData=" + encodeURIComponent(pixelData));
+                xhr.send(
+                    "imData=" +
+                        encodeURIComponent(pixelData) +
+                        "&filename=" +
+                        encodeURIComponent(validFilename),
+                );
+            }
+
+            function listFiles() {
+                fetch("/list")
+                    .then((response) => response.json())
+                    .then((files) => {
+                        fileListSelect.innerHTML = ""; // Clear existing options
+                        if (files && files.length > 0) {
+                            files.forEach((file) => {
+                                const option = document.createElement("option");
+                                option.value = file;
+                                option.textContent = file;
+                                fileListSelect.appendChild(option);
+                            });
+                            messageDiv.textContent = "";
+                            fileManagementDiv.style.display = "block";
+                        } else {
+                            messageDiv.textContent = "No files found.";
+                            fileManagementDiv.style.display = "none";
+                        }
+                    })
+                    .catch((error) => {
+                        console.error("Error listing files:", error);
+                        messageDiv.textContent = "Error listing files.";
+                        fileManagementDiv.style.display = "none";
+                    });
+            }
+
+            function deleteFile() {
+                const filename = fileListSelect.value;
+                if (!filename) {
+                    alert("Please select a file to delete.");
+                    return;
+                }
+
+                fetch(`/delete?filename=${encodeURIComponent(filename)}`, {
+                    method: "POST",
+                })
+                    .then((response) => {
+                        if (response.ok) {
+                            return response.text();
+                        } else {
+                            throw new Error("Failed to delete file.");
+                        }
+                    })
+                    .then((message) => {
+                        alert(message);
+                        listFiles(); // Refresh the list after deletion
+                    })
+                    .catch((error) => {
+                        console.error("Error deleting file:", error);
+                        alert("Error deleting file.");
+                    });
             }
         </script>
     </body>

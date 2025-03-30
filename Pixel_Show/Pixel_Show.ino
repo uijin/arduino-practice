@@ -166,11 +166,21 @@ void setup() {
   // NEW ROUTE FOR SAVING TO LITTLEFS
   server.on("/save", HTTP_POST, [](AsyncWebServerRequest *request) {
     String pixelData;
+    String filename;
+
     if (request->hasParam("imData", true)) {
       pixelData = request->getParam("imData", true)->value();
       Serial.println(pixelData);
     } else {
       request->send(400, "text/plain", "Missing pixel data for save");
+      return;
+    }
+
+    if (request->hasParam("filename", true)) {
+      filename = request->getParam("filename", true)->value();
+      Serial.println(filename);
+    } else {
+      request->send(400, "text/plain", "Missing filename for save");
       return;
     }
 
@@ -222,12 +232,41 @@ void setup() {
 
 
     // --- Save the Image to LittleFS
-    if (!saveImageToLittleFS("current_image.pxl", colors, N_X, N_Y)) {
+
+    // Ensure the filename has the .pxl extension.
+    if (!filename.endsWith(".pxl")) {
+      filename += ".pxl";
+    }
+
+    if (!saveImageToLittleFS(filename, colors, N_X, N_Y)) {
       request->send(500, "text/plain", "Failed to save image");
       return;
     }
 
     request->send(200, "text/plain", "Image saved to LittleFS!");
+  });
+
+  // NEW ROUTE:  List files on LittleFS
+  server.on("/list", HTTP_GET, [](AsyncWebServerRequest *request) {
+    String imageList = listImagesOnLittleFS();
+    request->send(200, "application/json", imageList);
+  });
+
+  // NEW ROUTE: Delete a file from LittleFS
+  server.on("/delete", HTTP_POST, [](AsyncWebServerRequest *request) {
+    String filename;
+    if (request->hasParam("filename")) {
+      filename = request->getParam("filename")->value();
+    } else {
+      request->send(400, "text/plain", "Missing filename parameter");
+      return;
+    }
+
+    if (deleteImageFromLittleFS(filename)) {
+      request->send(200, "text/plain", "File deleted successfully.");
+    } else {
+      request->send(500, "text/plain", "Failed to delete file.");
+    }
   });
 
   // Start server
