@@ -23,12 +23,13 @@
 CRGB leds[NUM_LEDS];
 
 // Function prototypes
+uint8_t getRowMajorIndex(uint8_t x, uint8_t y);
 uint8_t getUNShapeIndex(uint8_t x, uint8_t y);  // Define before use
 uint8_t get2ShapeIndex(uint8_t x, uint8_t y);
 void drawDiagonalLine(CRGB color);
 void drawHorizontalLine(uint8_t y, CRGB color);
-bool saveImageToLittleFS(const String &filename, int colors[][3], uint8_t numXPixels, uint8_t numYPixels);
-bool loadImageFromLittleFS(const String &filename, int colors[][3], uint8_t &numXPixels, uint8_t &numYPixels);
+bool saveImageToLittleFS(const String &filename, uint8_t colors[][3], uint8_t numXPixels, uint8_t numYPixels);
+bool loadImageFromLittleFS(const String &filename, uint8_t colors[][3], uint8_t &numXPixels, uint8_t &numYPixels);
 String listImagesOnLittleFS();
 bool deleteImageFromLittleFS(const String &filename);
 
@@ -106,7 +107,7 @@ void setup() {
     Serial.println(pixelData.length());
 
     // --- IMAGE DATA PROCESSING ---
-    int colors[NUM_LEDS][3];
+    uint8_t colors[NUM_LEDS][3];
 
     char *str;
     char *token;
@@ -124,9 +125,9 @@ void setup() {
     while (token != NULL && ledIndex < NUM_LEDS) {
       int img_x = ledIndex % N_X;
       int img_y = ledIndex / N_X;
-      uint8_t ledIndexDisplay = getLedIndex(img_x, img_y);
+      uint8_t ledIndexDisplay = getRowMajorIndex(img_x, img_y);
       int value = atoi(token);
-      colors[ledIndexDisplay][colorComponent] = value;
+      colors[ledIndexDisplay][colorComponent] = (uint8_t)value;
 
       colorComponent++;
 
@@ -162,18 +163,7 @@ void setup() {
     }
 
     // --- DISPLAY ON LED PANEL ---
-    for (uint8_t y = 0; y < N_Y; y++) {
-      for (uint8_t x = 0; x < N_X; x++) {
-        uint8_t ledIndexDisplay = getLedIndex(x, y);
-
-        // Calculate the colors[ledIndex][0], colors[ledIndex][1] and colors[ledIndex][2] from the color array.
-        leds[ledIndexDisplay].r = colors[ledIndexDisplay][0];
-        leds[ledIndexDisplay].g = colors[ledIndexDisplay][1];
-        leds[ledIndexDisplay].b = colors[ledIndexDisplay][2];
-      }
-    }
-
-    FastLED.show();  // Send the data to the LEDs
+    displayImage(colors);
     request->send(200, "text/plain", "Image received, saved, and displayed!");
   });
 
@@ -181,24 +171,13 @@ void setup() {
   server.begin();
 
   // Load image from LittleFS and display
-  int savedColors[NUM_LEDS][3];
+  uint8_t savedColors[NUM_LEDS][3];
   uint8_t savedNumXPixels = N_X;
   uint8_t savedNumYPixels = N_Y;
   if (loadImageFromLittleFS("current_image.pxl", savedColors, savedNumXPixels, savedNumYPixels)) {
     Serial.println("Load image after reboot");
     // --- DISPLAY ON LED PANEL ---
-    for (uint8_t y = 0; y < N_Y; y++) {
-      for (uint8_t x = 0; x < N_X; x++) {
-        uint8_t ledIndexDisplay = getLedIndex(x, y);
-
-        // Calculate the colors[ledIndex][0], colors[ledIndex][1] and colors[ledIndex][2] from the color array.
-        leds[ledIndexDisplay].r = savedColors[ledIndexDisplay][0];
-        leds[ledIndexDisplay].g = savedColors[ledIndexDisplay][1];
-        leds[ledIndexDisplay].b = savedColors[ledIndexDisplay][2];
-      }
-    }
-
-    FastLED.show();  // Send the data to the LEDs
+    displayImage(savedColors);
   }
 }
 
@@ -206,6 +185,9 @@ void loop() {
   // Nothing to do here - the display is updated in the /upload handler
 }
 
+uint8_t getRowMajorIndex(uint8_t x, uint8_t y) {
+    return y * N_X + x;
+}
 /**
  * Converts X,Y coordinates to LED index for a U/N-shaped serpentine pattern
  * For counterclockwise rotated 90 degrees S-shape panel.
@@ -316,7 +298,7 @@ void drawIpAddress(IPAddress ip) {
 /**
  * Saves the processed image data to LittleFS in a binary format, along with metadata about the image dimensions.
  */
-bool saveImageToLittleFS(const String &filename, int colors[][3], uint8_t numXPixels, uint8_t numYPixels) {
+bool saveImageToLittleFS(const String &filename, uint8_t colors[][3], uint8_t numXPixels, uint8_t numYPixels) {
   File file = LittleFS.open("/" + filename, "w");
 
   if (!file) {
@@ -351,7 +333,7 @@ bool saveImageToLittleFS(const String &filename, int colors[][3], uint8_t numXPi
 /**
  * Loads image data from a LittleFS file (in the defined binary format) into the colors array and retrieves the image dimensions.
  */
-bool loadImageFromLittleFS(const String &filename, int colors[][3], uint8_t &numXPixels, uint8_t &numYPixels) {
+bool loadImageFromLittleFS(const String &filename, uint8_t colors[][3], uint8_t &numXPixels, uint8_t &numYPixels) {
   File file = LittleFS.open("/" + filename, "r");
 
   if (!file) {
@@ -453,6 +435,20 @@ bool deleteImageFromLittleFS(const String &filename) {
     Serial.println(filename);
     return false;
   }
+}
+
+void displayImage(uint8_t colors[][3]) {
+  for (uint8_t y = 0; y < N_Y; y++) {
+    for (uint8_t x = 0; x < N_X; x++) {
+      uint8_t ledIndexFile = getRowMajorIndex(x, y);
+      uint8_t ledIndexDisplay = getLedIndex(x, y);
+
+      leds[ledIndexDisplay].r = colors[ledIndexFile][0];
+      leds[ledIndexDisplay].g = colors[ledIndexFile][1];
+      leds[ledIndexDisplay].b = colors[ledIndexFile][2];
+    }
+  }
+  FastLED.show();
 }
 
 // --- END NEW FUNCTIONS ---
