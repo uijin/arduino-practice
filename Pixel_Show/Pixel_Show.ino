@@ -269,6 +269,30 @@ void setup() {
     }
   });
 
+  // NEW ROUTE: Load a file from LittleFS
+  server.on("/load", HTTP_GET, [](AsyncWebServerRequest *request) {
+    String filename;
+    if (request->hasParam("filename")) {
+      filename = request->getParam("filename")->value();
+    } else {
+      request->send(400, "text/plain", "Missing filename parameter");
+      return;
+    }
+
+    uint8_t loadedColors[NUM_LEDS][3];
+    uint8_t loadedNumXPixels = N_X;
+    uint8_t loadedNumYPixels = N_Y;
+
+    if (loadImageFromLittleFS(filename, loadedColors, loadedNumXPixels, loadedNumYPixels)) {
+      Serial.println("Image loaded from LittleFS");
+      displayImage(loadedColors);
+      request->send(200, "text/plain", "Image loaded and displayed!");
+
+    } else {
+      request->send(500, "text/plain", "Failed to load image");
+    }
+  });
+
   // Start server
   server.begin();
 

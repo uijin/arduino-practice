@@ -493,7 +493,10 @@
                 <button id="send-btn">Send Image to Server</button>
                 <button id="save-btn">Save to LittleFS</button>
                 <button id="list-files-btn">List Files</button>
-                <button id="delete-file-btn">Delete File</button>
+                <button id="delete-file-btn" style="background-color: #e74c3c">
+                    Delete File
+                </button>
+                <button id="load-file-btn">Load Image</button>
             </div>
             <div id="file-management">
                 <label for="file-list">Available Files:</label>
@@ -534,6 +537,7 @@
             const deleteFileBtn = document.getElementById("delete-file-btn");
             const fileListSelect = document.getElementById("file-list");
             const messageDiv = document.getElementById("message");
+            const loadFileBtn = document.getElementById("load-file-btn");
 
             const fileManagementDiv =
                 document.getElementById("file-management");
@@ -624,6 +628,7 @@
             saveBtn.addEventListener("click", sendSaveRequest); // Add save button event listener
             listFilesBtn.addEventListener("click", listFiles);
             deleteFileBtn.addEventListener("click", deleteFile);
+            loadFileBtn.addEventListener("click", loadFile);
             fileManagementDiv.style.display = "none"; // hide at startup
 
             // Functions
@@ -998,23 +1003,48 @@
                     return;
                 }
 
-                fetch(`/delete?filename=${encodeURIComponent(filename)}`, {
-                    method: "POST",
-                })
+                if (
+                    confirm("Are you sure you want to delete " + filename + "?")
+                ) {
+                    fetch(`/delete?filename=${encodeURIComponent(filename)}`, {
+                        method: "POST",
+                    })
+                        .then((response) => {
+                            if (response.ok) {
+                                return response.text();
+                            } else {
+                                throw new Error("Failed to delete file.");
+                            }
+                        })
+                        .then((message) => {
+                            alert(message);
+                            listFiles(); // Refresh the list after deletion
+                        })
+                        .catch((error) => {
+                            console.error("Error deleting file:", error);
+                            alert("Error deleting file.");
+                        });
+                }
+            }
+
+            function loadFile() {
+                const filename = fileListSelect.value;
+                if (!filename) {
+                    alert("Please select a file to load.");
+                    return;
+                }
+
+                fetch(`/load?filename=${encodeURIComponent(filename)}`)
                     .then((response) => {
                         if (response.ok) {
                             return response.text();
                         } else {
-                            throw new Error("Failed to delete file.");
+                            throw new Error("Failed to load file.");
                         }
                     })
-                    .then((message) => {
-                        alert(message);
-                        listFiles(); // Refresh the list after deletion
-                    })
                     .catch((error) => {
-                        console.error("Error deleting file:", error);
-                        alert("Error deleting file.");
+                        console.error("Error loading file:", error);
+                        alert("Error loading file: " + error);
                     });
             }
         </script>
