@@ -158,15 +158,76 @@ void setup() {
     Serial.print("colors[0][2] = ");
     Serial.println(colors[0][2]);
 
+    // --- DISPLAY ON LED PANEL ---
+    displayImage(colors);
+    request->send(200, "text/plain", "Image received and displayed!");
+  });
+
+  // NEW ROUTE FOR SAVING TO LITTLEFS
+  server.on("/save", HTTP_POST, [](AsyncWebServerRequest *request) {
+    String pixelData;
+    if (request->hasParam("imData", true)) {
+      pixelData = request->getParam("imData", true)->value();
+      Serial.println(pixelData);
+    } else {
+      request->send(400, "text/plain", "Missing pixel data for save");
+      return;
+    }
+
+    Serial.print("Saving image data to LittleFS (length after URL decode): ");
+    Serial.println(pixelData.length());
+
+    // --- IMAGE DATA PROCESSING (same as in /upload) ---
+    uint8_t colors[NUM_LEDS][3];
+
+    char *str;
+    char *token;
+
+    // Create a non-const copy of pixelData for strtok
+    char pixelDataCopy[pixelData.length() + 1];
+    strcpy(pixelDataCopy, pixelData.c_str());
+
+    str = pixelDataCopy;
+
+    int ledIndex = 0;
+    int colorComponent = 0;
+
+    token = strtok(str, ",");
+    while (token != NULL && ledIndex < NUM_LEDS) {
+      int img_x = ledIndex % N_X;
+      int img_y = ledIndex / N_X;
+      uint8_t ledIndexDisplay = getRowMajorIndex(img_x, img_y);
+      int value = atoi(token);
+      colors[ledIndexDisplay][colorComponent] = (uint8_t)value;
+
+      colorComponent++;
+
+      if (colorComponent == 3) {
+        colorComponent = 0;
+        ledIndex++;
+      }
+      token = strtok(NULL, ",");
+    }
+
+
+    if (ledIndex != NUM_LEDS) {
+      Serial.print("Error: Not enough color data received. Expected data for ");
+      Serial.print(NUM_LEDS);
+      Serial.print(" LEDs. Received data for ");
+      Serial.print(ledIndex);
+      Serial.println(" LEDs.");
+      request->send(400, "text/plain", "Not enough pixel data");
+      return;
+    }
+
+
     // --- Save the Image to LittleFS
     if (!saveImageToLittleFS("current_image.pxl", colors, N_X, N_Y)) {
       request->send(500, "text/plain", "Failed to save image");
       return;
     }
 
-    // --- DISPLAY ON LED PANEL ---
-    displayImage(colors);
-    request->send(200, "text/plain", "Image received, saved, and displayed!");
+    request->send(200, "text/plain", "Image saved to LittleFS!");
   });
 
   // Start server

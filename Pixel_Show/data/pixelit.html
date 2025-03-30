@@ -460,6 +460,7 @@
                 <button id="apply-btn">Apply Pixelation</button>
                 <button id="download-btn">Download Image</button>
                 <button id="send-btn">Send Image to Server</button>
+                <button id="save-btn">Save to LittleFS</button>
             </div>
         </div>
 
@@ -489,10 +490,14 @@
                 document.getElementById("maintain-aspect");
             const pasteBtn = document.getElementById("paste-btn");
             const sendBtn = document.getElementById("send-btn"); // Added
+            const saveBtn = document.getElementById("save-btn"); // Add save button
 
             // Context for canvases
             const ctxOriginal = canvasOriginal.getContext("2d");
             const ctxResult = canvasResult.getContext("2d");
+
+            // Global variable to store the image data
+            let imageData;
 
             // Default Image
             let defaultImg = new Image();
@@ -570,6 +575,7 @@
             updateScaleValue();
 
             sendBtn.addEventListener("click", sendImageToServer); // Added event listener
+            saveBtn.addEventListener("click", sendSaveRequest); // Add save button event listener
 
             // Functions
             function handleImageUpload(e) {
@@ -807,9 +813,7 @@
                 return { r, g, b };
             }
 
-            function sendImageToServer() {
-                // Added function to send image data
-                const canvas = document.getElementById("canvas-result");
+            function getPixelData(canvas) {
                 const ctx = canvas.getContext("2d");
                 const imgData = ctx.getImageData(
                     0,
@@ -818,7 +822,6 @@
                     canvas.height,
                 );
                 const data = imgData.data;
-
                 let pixelData = "";
                 for (let i = 0; i < data.length; i += 4) {
                     const r = data[i];
@@ -829,6 +832,15 @@
                         pixelData += ",";
                     }
                 }
+                return pixelData;
+            }
+
+            function sendImageToServer() {
+                // Added function to send image data
+                const canvas = document.getElementById("canvas-result");
+                const pixelData = getPixelData(canvas);
+
+                imageData = pixelData; // Store image data in global variable
 
                 var xhr = new XMLHttpRequest();
                 xhr.open("POST", "/upload", true);
@@ -849,6 +861,38 @@
 
                 xhr.onerror = function () {
                     alert("Network error occurred while uploading image!");
+                };
+
+                xhr.send("imData=" + encodeURIComponent(pixelData));
+            }
+
+            function sendSaveRequest() {
+                // Function to send the save request
+                const canvas = document.getElementById("canvas-result");
+                const pixelData = getPixelData(canvas);
+
+                if (!pixelData) {
+                    alert("No image data to save.  Apply pixelation first.");
+                    return;
+                }
+
+                var xhr = new XMLHttpRequest();
+                xhr.open("POST", "/save", true);
+                xhr.setRequestHeader(
+                    "Content-type",
+                    "application/x-www-form-urlencoded",
+                );
+
+                xhr.onload = function () {
+                    if (xhr.status == 200) {
+                        alert("Image saved to LittleFS successfully!");
+                    } else {
+                        alert("Image save failed! Status code: " + xhr.status);
+                    }
+                };
+
+                xhr.onerror = function () {
+                    alert("Network error occurred while saving image!");
                 };
 
                 xhr.send("imData=" + encodeURIComponent(pixelData));
