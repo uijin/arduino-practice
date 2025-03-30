@@ -27,6 +27,10 @@ uint8_t getUNShapeIndex(uint8_t x, uint8_t y); // Define before use
 uint8_t get2ShapeIndex(uint8_t x, uint8_t y);
 void drawDiagonalLine(CRGB color);
 void drawHorizontalLine(uint8_t y, CRGB color);
+bool saveImageToLittleFS(const String& filename, int colors[][3], uint8_t numXPixels, uint8_t numYPixels);
+bool loadImageFromLittleFS(const String& filename, int colors[][3], uint8_t &numXPixels, uint8_t &numYPixels);
+String listImagesOnLittleFS();
+bool deleteImageFromLittleFS(const String& filename);
 
 // Function pointer type for index calculation
 typedef uint8_t (*IndexFunction)(uint8_t, uint8_t);
@@ -151,6 +155,12 @@ void setup() {
     Serial.print("colors[0][2] = ");
     Serial.println(colors[0][2]);
 
+    // --- Save the Image to LittleFS
+    if (!saveImageToLittleFS("current_image.pxl", colors, N_X, N_Y)) {
+      request->send(500, "text/plain", "Failed to save image");
+      return;
+    }
+
     // --- DISPLAY ON LED PANEL ---
     for (uint8_t y = 0; y < N_Y; y++) {
       for (uint8_t x = 0; x < N_X; x++) {
@@ -164,21 +174,32 @@ void setup() {
     }
 
     FastLED.show(); // Send the data to the LEDs
-    request->send(200, "text/plain", "Image received and displayed!");
-  });
-
-  // Route for style.css (ADDED)
-  server.on("/styles.css", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(LittleFS, "/styles.css", "text/css");
-  });
-
-  // Route for pixelit.js (ADDED)
-  server.on("/pixelit.js", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(LittleFS, "/pixelit.js", "application/javascript");
+    request->send(200, "text/plain", "Image received, saved, and displayed!");
   });
 
   // Start server
   server.begin();
+
+  // Load image from LittleFS and display
+  int savedColors[NUM_LEDS][3];
+  uint8_t savedNumXPixels = N_X;
+  uint8_t savedNumYPixels = N_Y;
+  if (loadImageFromLittleFS("current_image.pxl", savedColors, savedNumXPixels, savedNumYPixels)) {
+    Serial.println("Load image after reboot");
+    // --- DISPLAY ON LED PANEL ---
+    for (uint8_t y = 0; y < N_Y; y++) {
+      for (uint8_t x = 0; x < N_X; x++) {
+        uint8_t ledIndexDisplay = getLedIndex(x, y);
+
+        // Calculate the colors[ledIndex][0], colors[ledIndex][1] and colors[ledIndex][2] from the color array.
+        leds[ledIndexDisplay].r = savedColors[ledIndexDisplay][0];
+        leds[ledIndexDisplay].g = savedColors[ledIndexDisplay][1];
+        leds[ledIndexDisplay].b = savedColors[ledIndexDisplay][2];
+      }
+    }
+
+    FastLED.show(); // Send the data to the LEDs
+  }
 }
 
 void loop() {
@@ -289,3 +310,149 @@ void drawIpAddress(IPAddress ip) {
     // colorIndex += 1;
   }
 }
+
+// --- NEW FUNCTIONS ---
+
+/**
+ * Saves the processed image data to LittleFS in a binary format, along with metadata about the image dimensions.
+ */
+bool saveImageToLittleFS(const String& filename, int colors[][3], uint8_t numXPixels, uint8_t numYPixels) {
+  File file = LittleFS.open("/" + filename, "w");
+
+  if (!file) {
+    Serial.println("Failed to open file for writing");
+    return false;
+  }
+
+  // Write 6-byte header
+  file.write(0x50); // 'P'
+  file.write(0x58); // 'X'
+  file.write(0x4C); // 'L'
+  file.write(0x01); // File Schema Version 1
+  file.write(numXPixels);
+  file.write(numYPixels);
+
+  uint16_t num_leds = numXPixels * numYPixels;
+
+  // Write pixel data (R, G, B for each pixel)
+  for (uint16_t i = 0; i < num_leds; i++) {
+    file.write(colors[i][0]); // Red
+    file.write(colors[i][1]); // Green
+    file.write(colors[i][2]); // Blue
+  }
+
+  file.close();
+  Serial.print("Image saved to LittleFS: ");
+  Serial.println(filename);
+
+  return true;
+}
+
+/**
+ * Loads image data from a LittleFS file (in the defined binary format) into the colors array and retrieves the image dimensions.
+ */
+bool loadImageFromLittleFS(const String& filename, int colors[][3], uint8_t &numXPixels, uint8_t &numYPixels) {
+  File file = LittleFS.open("/" + filename, "r");
+
+  if (!file) {
+    Serial.println("Failed to open file for reading");
+    return false;
+  }
+
+  // Read 6-byte header
+  if (file.available() < 6) {
+    Serial.println("File is too small to contain header");
+    file.close();
+    return false;
+  }
+
+  // Check signature
+  if (file.read() != 0x50 || file.read() != 0x58 || file.read() != 0x4C) {
+    Serial.println("Invalid file signature");
+    file.close();
+    return false;
+  }
+
+  // Read file schema version (discard)
+  file.read();
+
+  // Read image dimensions
+  numXPixels = file.read();
+  numYPixels = file.read();
+
+  uint16_t num_leds = numXPixels * numYPixels;
+  if (num_leds != NUM_LEDS) {
+      Serial.print("Loaded data (X=");
+      Serial.print(numXPixels);
+      Serial.print(", Y=");
+      Serial.print(numYPixels);
+      Serial.print(") does not match current LED data (X=");
+      Serial.print(N_X);
+      Serial.print(", Y=");
+      Serial.print(N_Y);
+      Serial.println(")");
+      // TODO: Realloc the memory of color and leds array if needed.
+  }
+
+  // Read pixel data
+  for (uint16_t i = 0; i < num_leds; i++) {
+    if (file.available() < 3) {
+      Serial.println("File ended prematurely while reading pixel data");
+      file.close();
+      return false;
+    }
+
+    colors[i][0] = file.read(); // Red
+    colors[i][1] = file.read(); // Green
+    colors[i][2] = file.read(); // Blue
+  }
+
+  file.close();
+  Serial.print("Image loaded from LittleFS: ");
+  Serial.println(filename);
+  return true;
+}
+
+
+/**
+ * Lists all files with ".pxl" extension on LittleFS.
+ */
+String listImagesOnLittleFS() {
+  String imageList = "[";
+  File root = LittleFS.open("/");
+  File file = root.openNextFile();
+
+  bool first = true;
+  while (file) {
+    if (String(file.name()).endsWith(".pxl")) {
+      if (!first) {
+        imageList += ",";
+      }
+      imageList += "\"" + String(file.name()) + "\"";
+      first = false;
+    }
+    file = root.openNextFile();
+  }
+
+  imageList += "]";
+  return imageList;
+}
+
+/**
+ * Deletes an image file from LittleFS.
+ */
+bool deleteImageFromLittleFS(const String& filename) {
+  String fullPath = "/" + filename;
+
+  if (LittleFS.remove(fullPath.c_str())) {
+    Serial.print("Image deleted from LittleFS: ");
+    Serial.println(filename);
+    return true;
+  } else {
+    Serial.print("Failed to delete image from LittleFS: ");
+    Serial.println(filename);
+    return false;
+  }
+}
+
+// --- END NEW FUNCTIONS ---
