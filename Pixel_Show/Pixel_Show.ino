@@ -32,6 +32,7 @@ bool saveImageToLittleFS(const String &filename, uint8_t colors[][3], uint8_t nu
 bool loadImageFromLittleFS(const String &filename, uint8_t colors[][3], uint8_t &numXPixels, uint8_t &numYPixels);
 String listImagesOnLittleFS();
 bool deleteImageFromLittleFS(const String &filename);
+String generatePreviewData(uint8_t colors[][3], uint8_t numXPixels, uint8_t numYPixels);
 
 // Function pointer type for index calculation
 typedef uint8_t (*IndexFunction)(uint8_t, uint8_t);
@@ -250,6 +251,29 @@ void setup() {
   server.on("/list", HTTP_GET, [](AsyncWebServerRequest *request) {
     String imageList = listImagesOnLittleFS();
     request->send(200, "application/json", imageList);
+  });
+
+  // NEW ROUTE: Serve image data for preview
+  server.on("/images/*", HTTP_GET, [](AsyncWebServerRequest *request) {
+    String path = request->url();
+    String filename = path.substring(8); // Remove "/images/" prefix
+
+    Serial.print("Loading image preview: ");
+    Serial.println(filename);
+
+    uint8_t loadedColors[NUM_LEDS][3];
+    uint8_t loadedNumXPixels = N_X;
+    uint8_t loadedNumYPixels = N_Y;
+
+    if (loadImageFromLittleFS(filename, loadedColors, loadedNumXPixels, loadedNumYPixels)) {
+      // Generate a base64 encoded image or JSON data
+      String imageData = generatePreviewData(loadedColors, loadedNumXPixels, loadedNumYPixels);
+      request->send(200, "application/json", imageData);
+    } else {
+      Serial.print("Error: Image not found - ");
+      Serial.println(filename);
+      request->send(404, "text/plain", "Image not found: " + filename);
+    }
   });
 
   // NEW ROUTE: Delete a file from LittleFS
@@ -521,7 +545,7 @@ bool loadImageFromLittleFS(const String &filename, uint8_t colors[][3], uint8_t 
 
 
 /**
- * Lists all files with ".pxl" extension on LittleFS.
+ * Lists all files with ".pxl" extension on LittleFS with metadata.
  */
 String listImagesOnLittleFS() {
   String imageList = "[";
@@ -534,7 +558,16 @@ String listImagesOnLittleFS() {
       if (!first) {
         imageList += ",";
       }
-      imageList += "\"" + String(file.name()) + "\"";
+
+      // Get file size
+      size_t fileSize = file.size();
+      String filename = String(file.name());
+
+      // Create a JSON object for each file
+      imageList += "{\"name\":\"" + filename + "\",";
+      imageList += "\"size\":" + String(fileSize) + ",";
+      imageList += "\"path\":\"/images/" + filename + "\"}";
+
       first = false;
     }
     file = root.openNextFile();
@@ -542,6 +575,26 @@ String listImagesOnLittleFS() {
 
   imageList += "]";
   return imageList;
+}
+
+/**
+ * Generates JSON data with image preview information
+ */
+String generatePreviewData(uint8_t colors[][3], uint8_t numXPixels, uint8_t numYPixels) {
+  String data = "{\"width\":" + String(numXPixels) + ",";
+  data += "\"height\":" + String(numYPixels) + ",";
+  data += "\"pixels\":[";
+
+  for (int i = 0; i < numXPixels * numYPixels; i++) {
+    if (i > 0) data += ",";
+
+    data += "[" + String(colors[i][0]) + ","
+               + String(colors[i][1]) + ","
+               + String(colors[i][2]) + "]";
+  }
+
+  data += "]}";
+  return data;
 }
 
 /**
