@@ -22,6 +22,16 @@
 // Define the LED array that will hold color values for each LED
 CRGB leds[NUM_LEDS];
 
+// Button configuration
+#define BUTTON_PIN 0       // GPIO0 connected to the button
+bool lastButtonState = HIGH;
+bool currentButtonState;
+
+// Image list and index
+String imageFilenames[256];  // Assuming a maximum of 256 images
+int currentImageIndex = 0;
+int totalImages = 0;
+
 // Function prototypes
 uint8_t getRowMajorIndex(uint8_t x, uint8_t y);
 uint8_t getUNShapeIndex(uint8_t x, uint8_t y);  // Define before use
@@ -33,6 +43,7 @@ bool loadImageFromLittleFS(const String &filename, uint8_t colors[][3], uint8_t 
 String listImagesOnLittleFS();
 bool deleteImageFromLittleFS(const String &filename);
 String generatePreviewData(uint8_t colors[][3], uint8_t numXPixels, uint8_t numYPixels);
+void displayImage(uint8_t colors[][3]);
 
 // Function pointer type for index calculation
 typedef uint8_t (*IndexFunction)(uint8_t, uint8_t);
@@ -329,10 +340,49 @@ void setup() {
     // --- DISPLAY ON LED PANEL ---
     displayImage(savedColors);
   }
+
+  // Initialize button pin
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+  // Scan LittleFS for .pxl files
+  File root = LittleFS.open("/");
+  File file = root.openNextFile();
+  while (file) {
+    if (String(file.name()).endsWith(".pxl")) {
+      imageFilenames[totalImages] = String(file.name());
+      totalImages++;
+    }
+    file = root.openNextFile();
+  }
+
+  Serial.print("Total images found: ");
+  Serial.println(totalImages);
 }
 
 void loop() {
-  // Nothing to do here - the display is updated in the /upload handler
+  // Read the current state of the button
+  currentButtonState = digitalRead(BUTTON_PIN);
+
+  // Check if the button was pressed (transition from HIGH to LOW)
+  if (currentButtonState == LOW && lastButtonState == HIGH) {
+    delay(200);  // Debounce delay
+
+    // Load and display the next image
+    if (totalImages > 0) {
+      currentImageIndex = (currentImageIndex + 1) % totalImages;
+      String filename = imageFilenames[currentImageIndex];
+      uint8_t colors[NUM_LEDS][3];
+      uint8_t numXPixels = N_X;
+      uint8_t numYPixels = N_Y;
+
+      if (loadImageFromLittleFS(filename, colors, numXPixels, numYPixels)) {
+        displayImage(colors);
+      }
+    }
+  }
+
+  // Update the last button state
+  lastButtonState = currentButtonState;
 }
 
 uint8_t getRowMajorIndex(uint8_t x, uint8_t y) {
