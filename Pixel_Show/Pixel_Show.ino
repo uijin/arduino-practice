@@ -5,6 +5,7 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <string.h>  // Include for strlen, strtok
+#include <ArduinoJson.h>
 
 // WiFi credentials
 // const char* ssid = "YOUR_WIFI_SSID";
@@ -44,6 +45,7 @@ String listImagesOnLittleFS();
 bool deleteImageFromLittleFS(const String &filename);
 String generatePreviewData(uint8_t colors[][3], uint8_t numXPixels, uint8_t numYPixels);
 void displayImage(uint8_t colors[][3]);
+bool processPixelData(const String &pixelData, uint8_t colors[][3]);
 
 // Function pointer type for index calculation
 typedef uint8_t (*IndexFunction)(uint8_t, uint8_t);
@@ -77,23 +79,17 @@ void setup() {
   FastLED.setBrightness(BRIGHTNESS);
   // FastLED.setCorrection(TypicalPixelString);
   FastLED.setTemperature(Halogen);
-  FastLED.clear();
-  FastLED.show();
 
   // LED Panel Test
   // Comment out these lines after testing
-  // drawDiagonalLine(CRGB::Red);
   drawHorizontalLine(0, CRGB::Red);
   drawHorizontalLine(1, CRGB::Green);
   drawHorizontalLine(2, CRGB::Blue);
-
   FastLED.show();
   delay(3000);  // Display for 5 seconds
   FastLED.clear();
 
-
   drawIpAddress(WiFi.localIP());
-
   FastLED.show();
 
   // Route for root / web page
@@ -111,7 +107,6 @@ void setup() {
     String pixelData;
     if (request->hasParam("imData", true)) {
       pixelData = request->getParam("imData", true)->value();
-      Serial.println(pixelData);
     } else {
       request->send(400, "text/plain", "Missing pixel data");
       return;
@@ -120,57 +115,14 @@ void setup() {
     Serial.print("Received pixel data (length after URL decode): ");
     Serial.println(pixelData.length());
 
-    // --- IMAGE DATA PROCESSING ---
+    // Process the pixel data
     uint8_t colors[NUM_LEDS][3];
-
-    char *str;
-    char *token;
-
-    // Create a non-const copy of pixelData for strtok
-    char pixelDataCopy[pixelData.length() + 1];
-    strcpy(pixelDataCopy, pixelData.c_str());
-
-    str = pixelDataCopy;
-
-    int ledIndex = 0;
-    int colorComponent = 0;
-
-    token = strtok(str, ",");
-    while (token != NULL && ledIndex < NUM_LEDS) {
-      int img_x = ledIndex % N_X;
-      int img_y = ledIndex / N_X;
-      uint8_t ledIndexDisplay = getRowMajorIndex(img_x, img_y);
-      int value = atoi(token);
-      colors[ledIndexDisplay][colorComponent] = (uint8_t)value;
-
-      colorComponent++;
-
-      if (colorComponent == 3) {
-        colorComponent = 0;
-        ledIndex++;
-      }
-      token = strtok(NULL, ",");
-    }
-
-
-    if (ledIndex != NUM_LEDS) {
-      Serial.print("Error: Not enough color data received. Expected data for ");
-      Serial.print(NUM_LEDS);
-      Serial.print(" LEDs. Received data for ");
-      Serial.print(ledIndex);
-      Serial.println(" LEDs.");
-      request->send(400, "text/plain", "Not enough pixel data");
+    if (!processPixelData(pixelData, colors)) {
+      request->send(400, "text/plain", "Invalid pixel data format");
       return;
     }
 
-    Serial.print("colors[0][0] = ");
-    Serial.println(colors[0][0]);
-    Serial.print("colors[0][1] = ");
-    Serial.println(colors[0][1]);
-    Serial.print("colors[0][2] = ");
-    Serial.println(colors[0][2]);
-
-    // --- DISPLAY ON LED PANEL ---
+    // Display on LED panel
     displayImage(colors);
     request->send(200, "text/plain", "Image received and displayed!");
   });
@@ -182,7 +134,6 @@ void setup() {
 
     if (request->hasParam("imData", true)) {
       pixelData = request->getParam("imData", true)->value();
-      Serial.println(pixelData);
     } else {
       request->send(400, "text/plain", "Missing pixel data for save");
       return;
@@ -190,7 +141,6 @@ void setup() {
 
     if (request->hasParam("filename", true)) {
       filename = request->getParam("filename", true)->value();
-      Serial.println(filename);
     } else {
       request->send(400, "text/plain", "Missing filename for save");
       return;
@@ -199,51 +149,12 @@ void setup() {
     Serial.print("Saving image data to LittleFS (length after URL decode): ");
     Serial.println(pixelData.length());
 
-    // --- IMAGE DATA PROCESSING (same as in /upload) ---
+    // Process the pixel data
     uint8_t colors[NUM_LEDS][3];
-
-    char *str;
-    char *token;
-
-    // Create a non-const copy of pixelData for strtok
-    char pixelDataCopy[pixelData.length() + 1];
-    strcpy(pixelDataCopy, pixelData.c_str());
-
-    str = pixelDataCopy;
-
-    int ledIndex = 0;
-    int colorComponent = 0;
-
-    token = strtok(str, ",");
-    while (token != NULL && ledIndex < NUM_LEDS) {
-      int img_x = ledIndex % N_X;
-      int img_y = ledIndex / N_X;
-      uint8_t ledIndexDisplay = getRowMajorIndex(img_x, img_y);
-      int value = atoi(token);
-      colors[ledIndexDisplay][colorComponent] = (uint8_t)value;
-
-      colorComponent++;
-
-      if (colorComponent == 3) {
-        colorComponent = 0;
-        ledIndex++;
-      }
-      token = strtok(NULL, ",");
-    }
-
-
-    if (ledIndex != NUM_LEDS) {
-      Serial.print("Error: Not enough color data received. Expected data for ");
-      Serial.print(NUM_LEDS);
-      Serial.print(" LEDs. Received data for ");
-      Serial.print(ledIndex);
-      Serial.println(" LEDs.");
-      request->send(400, "text/plain", "Not enough pixel data");
+    if (!processPixelData(pixelData, colors)) {
+      request->send(400, "text/plain", "Invalid pixel data format");
       return;
     }
-
-
-    // --- Save the Image to LittleFS
 
     // Ensure the filename has the .pxl extension.
     if (!filename.endsWith(".pxl")) {
@@ -256,15 +167,15 @@ void setup() {
     }
 
     request->send(200, "text/plain", "Image saved to LittleFS!");
-  });
+    });
 
-  // NEW ROUTE:  List files on LittleFS
+  // List files on LittleFS
   server.on("/list", HTTP_GET, [](AsyncWebServerRequest *request) {
     String imageList = listImagesOnLittleFS();
     request->send(200, "application/json", imageList);
   });
 
-  // NEW ROUTE: Serve image data for preview
+  // Serve image data for preview
   server.on("/images/*", HTTP_GET, [](AsyncWebServerRequest *request) {
     String path = request->url();
     String filename = path.substring(8); // Remove "/images/" prefix
@@ -277,7 +188,7 @@ void setup() {
     uint8_t loadedNumYPixels = N_Y;
 
     if (loadImageFromLittleFS(filename, loadedColors, loadedNumXPixels, loadedNumYPixels)) {
-      // Generate a base64 encoded image or JSON data
+      // Generate json data using the improved function
       String imageData = generatePreviewData(loadedColors, loadedNumXPixels, loadedNumYPixels);
       request->send(200, "application/json", imageData);
     } else {
@@ -287,7 +198,7 @@ void setup() {
     }
   });
 
-  // NEW ROUTE: Delete a file from LittleFS
+  // Delete a file from LittleFS
   server.on("/delete", HTTP_POST, [](AsyncWebServerRequest *request) {
     String filename;
     if (request->hasParam("filename")) {
@@ -304,7 +215,7 @@ void setup() {
     }
   });
 
-  // NEW ROUTE: Load a file from LittleFS
+  // Load a file from LittleFS
   server.on("/load", HTTP_GET, [](AsyncWebServerRequest *request) {
     String filename;
     if (request->hasParam("filename")) {
@@ -631,20 +542,29 @@ String listImagesOnLittleFS() {
  * Generates JSON data with image preview information
  */
 String generatePreviewData(uint8_t colors[][3], uint8_t numXPixels, uint8_t numYPixels) {
-  String data = "{\"width\":" + String(numXPixels) + ",";
-  data += "\"height\":" + String(numYPixels) + ",";
-  data += "\"pixels\":[";
+  // Calculate the size needed for the JSON document
+  // Each pixel needs 3 integers + brackets and commas
+  const size_t pixelCount = numXPixels * numYPixels;
+  const size_t capacity = JSON_OBJECT_SIZE(3) + // width, height, pixels array
+                          JSON_ARRAY_SIZE(pixelCount) + // pixels array
+                          pixelCount * JSON_ARRAY_SIZE(3); // RGB values for each pixel
 
-  for (int i = 0; i < numXPixels * numYPixels; i++) {
-    if (i > 0) data += ",";
+  DynamicJsonDocument doc(capacity);
 
-    data += "[" + String(colors[i][0]) + ","
-               + String(colors[i][1]) + ","
-               + String(colors[i][2]) + "]";
+  doc["width"] = numXPixels;
+  doc["height"] = numYPixels;
+
+  JsonArray pixels = doc.createNestedArray("pixels");
+  for (size_t i = 0; i < pixelCount; i++) {
+    JsonArray pixel = pixels.createNestedArray();
+    pixel.add(colors[i][0]); // R
+    pixel.add(colors[i][1]); // G
+    pixel.add(colors[i][2]); // B
   }
 
-  data += "]}";
-  return data;
+  String result;
+  serializeJson(doc, result);
+  return result;
 }
 
 /**
@@ -676,4 +596,60 @@ void displayImage(uint8_t colors[][3]) {
     }
   }
   FastLED.show();
+}
+
+/**
+ * Process pixel data from HTTP request
+ * This common function replaces the duplicated code in /upload and /save routes
+ * Uses a more efficient parsing method than strtok()
+ *
+ * @param pixelData String containing comma-separated RGB values
+ * @param colors Output array where the parsed RGB values will be stored
+ * @return true if parsing was successful, false otherwise
+ */
+bool processPixelData(const String &pixelData, uint8_t colors[][3]) {
+  int dataLen = pixelData.length();
+  int startIdx = 0;
+  int endIdx = 0;
+  int ledIndex = 0;
+  int colorComponent = 0;
+
+  // Process each value in the comma-separated list
+  while (startIdx < dataLen && ledIndex < NUM_LEDS) {
+    // Find the next comma or end of string
+    endIdx = pixelData.indexOf(',', startIdx);
+    if (endIdx == -1) {
+      endIdx = dataLen;  // Last value
+    }
+
+    // Extract and convert the value
+    int value = pixelData.substring(startIdx, endIdx).toInt();
+
+    // Calculate the target index for the LED
+    int img_x = ledIndex % N_X;
+    int img_y = ledIndex / N_X;
+    uint8_t ledIndexDisplay = getRowMajorIndex(img_x, img_y);
+
+    // Store the color component
+    colors[ledIndexDisplay][colorComponent] = (uint8_t)value;
+
+    // Move to next color component or LED
+    colorComponent++;
+    if (colorComponent == 3) {
+      colorComponent = 0;
+      ledIndex++;
+    }
+
+    // Move to next value
+    startIdx = endIdx + 1;
+  }
+
+  // Verify we got all the expected data
+  if (ledIndex != NUM_LEDS) {
+    Serial.printf("Error: Not enough color data. Expected %d LEDs, got %d LEDs.\n",
+                  NUM_LEDS, ledIndex);
+    return false;
+  }
+
+  return true;
 }
