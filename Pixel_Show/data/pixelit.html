@@ -292,6 +292,7 @@
                 justify-content: center;
                 gap: 10px;
                 margin-top: 20px;
+                flex-wrap: wrap;
             }
 
             #download-btn {
@@ -360,6 +361,75 @@
                 display: flex;
                 flex-wrap: wrap;
                 gap: 10px;
+            }
+
+            .tabs {
+                display: flex;
+                border-bottom: 1px solid #ddd;
+                margin-bottom: 15px;
+            }
+
+            .tab {
+                padding: 10px 15px;
+                cursor: pointer;
+                border: 1px solid transparent;
+                border-bottom: none;
+                margin-right: 5px;
+                border-radius: 4px 4px 0 0;
+            }
+
+            .tab.active {
+                background-color: white;
+                border-color: #ddd;
+                border-bottom: 1px solid white;
+                margin-bottom: -1px;
+                font-weight: bold;
+            }
+
+            .tab-content {
+                display: none;
+            }
+
+            .tab-content.active {
+                display: block;
+            }
+
+            .download-btn-sm {
+                background-color: #27ae60;
+                padding: 5px 10px;
+                font-size: 0.8em;
+                margin-left: 5px;
+            }
+
+            .all-files-list {
+                margin-top: 15px;
+                background-color: white;
+                border-radius: 4px;
+                padding: 15px;
+                max-height: 300px;
+                overflow-y: auto;
+            }
+
+            .file-item {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 8px;
+                border-bottom: 1px solid #eee;
+            }
+
+            .file-item:last-child {
+                border-bottom: none;
+            }
+
+            .file-name {
+                flex-grow: 1;
+            }
+
+            .file-size {
+                color: #666;
+                font-size: 0.9em;
+                margin-right: 10px;
             }
         </style>
     </head>
@@ -518,16 +588,39 @@
                 <button id="download-btn">Download Image</button>
                 <button id="send-btn">Send Image to Server</button>
                 <button id="save-btn">Save to LittleFS</button>
-                <button id="list-files-btn">List Files</button>
-                <button id="delete-file-btn" style="background-color: #e74c3c">
-                    Delete File
-                </button>
-                <button id="load-file-btn">Load Image</button>
+                <button id="list-files-btn">Manage Files</button>
             </div>
-            <div id="file-management">
-                <label for="file-list">Available Files:</label>
-                <select id="file-list"></select>
+
+            <div id="file-management" style="display: none">
+                <div class="tabs">
+                    <div class="tab active" data-tab="images-tab">
+                        Image Files
+                    </div>
+                    <div class="tab" data-tab="all-files-tab">All Files</div>
+                </div>
+
+                <div id="images-tab" class="tab-content active">
+                    <div class="control-group">
+                        <label for="file-list">Available Images:</label>
+                        <select id="file-list"></select>
+                        <button id="load-file-btn">Load</button>
+                        <button
+                            id="delete-file-btn"
+                            style="background-color: #e74c3c"
+                        >
+                            Delete
+                        </button>
+                    </div>
+                    <div id="file-previews"></div>
+                </div>
+
+                <div id="all-files-tab" class="tab-content">
+                    <p>All files in LittleFS storage:</p>
+                    <button id="list-all-files-btn">Refresh File List</button>
+                    <div id="all-files-list" class="all-files-list"></div>
+                </div>
             </div>
+
             <div id="message"></div>
         </div>
 
@@ -556,17 +649,41 @@
             const maintainAspectCheckbox =
                 document.getElementById("maintain-aspect");
             const pasteBtn = document.getElementById("paste-btn");
-            const sendBtn = document.getElementById("send-btn"); // Added
-            const saveBtn = document.getElementById("save-btn"); // Add save button
-            const filenameInput = document.getElementById("filename"); // Filename input
+            const sendBtn = document.getElementById("send-btn");
+            const saveBtn = document.getElementById("save-btn");
+            const filenameInput = document.getElementById("filename");
             const listFilesBtn = document.getElementById("list-files-btn");
             const deleteFileBtn = document.getElementById("delete-file-btn");
             const fileListSelect = document.getElementById("file-list");
             const messageDiv = document.getElementById("message");
             const loadFileBtn = document.getElementById("load-file-btn");
-
             const fileManagementDiv =
                 document.getElementById("file-management");
+            const listAllFilesBtn =
+                document.getElementById("list-all-files-btn");
+            const allFilesList = document.getElementById("all-files-list");
+
+            // Tab navigation
+            const tabs = document.querySelectorAll(".tab");
+            const tabContents = document.querySelectorAll(".tab-content");
+
+            tabs.forEach((tab) => {
+                tab.addEventListener("click", () => {
+                    const targetTab = tab.getAttribute("data-tab");
+
+                    // Update active tab
+                    tabs.forEach((t) => t.classList.remove("active"));
+                    tab.classList.add("active");
+
+                    // Update active content
+                    tabContents.forEach((content) => {
+                        content.classList.remove("active");
+                        if (content.id === targetTab) {
+                            content.classList.add("active");
+                        }
+                    });
+                });
+            });
 
             // Context for canvases
             const ctxOriginal = canvasOriginal.getContext("2d");
@@ -650,12 +767,15 @@
             // Initial setup
             updateScaleValue();
 
-            sendBtn.addEventListener("click", sendImageToServer); // Added event listener
-            saveBtn.addEventListener("click", sendSaveRequest); // Add save button event listener
-            listFilesBtn.addEventListener("click", listFiles);
+            sendBtn.addEventListener("click", sendImageToServer);
+            saveBtn.addEventListener("click", sendSaveRequest);
+            listFilesBtn.addEventListener("click", function () {
+                fileManagementDiv.style.display = "block";
+                listFiles();
+            });
             deleteFileBtn.addEventListener("click", deleteFile);
             loadFileBtn.addEventListener("click", loadFile);
-            fileManagementDiv.style.display = "none"; // hide at startup
+            listAllFilesBtn.addEventListener("click", listAllFiles);
 
             // Functions
             function handleImageUpload(e) {
@@ -936,6 +1056,10 @@
                 xhr.onload = function () {
                     if (xhr.status == 200) {
                         console.debug("Image uploaded successfully!");
+                        messageDiv.textContent = "Image sent to LED panel!";
+                        setTimeout(() => {
+                            messageDiv.textContent = "";
+                        }, 3000);
                     } else {
                         alert(
                             "Image upload failed! Status code: " + xhr.status,
@@ -978,7 +1102,12 @@
 
                 xhr.onload = function () {
                     if (xhr.status == 200) {
-                        alert("Image saved to LittleFS successfully!");
+                        messageDiv.textContent =
+                            "Image saved to LittleFS successfully!";
+                        setTimeout(() => {
+                            messageDiv.textContent = "";
+                        }, 3000);
+                        listFiles(); // Refresh file list
                     } else {
                         alert("Image save failed! Status code: " + xhr.status);
                     }
@@ -1001,18 +1130,10 @@
                 fetch("/list")
                     .then((response) => response.json())
                     .then((files) => {
-                        const fileListContainer =
-                            document.getElementById("file-management");
                         fileListSelect.innerHTML = ""; // Clear existing options
-
-                        // Create container for file list with previews
                         const filePreviewsContainer =
-                            document.createElement("div");
-                        filePreviewsContainer.id = "file-previews";
-                        filePreviewsContainer.style.display = "flex";
-                        filePreviewsContainer.style.flexWrap = "wrap";
-                        filePreviewsContainer.style.gap = "10px";
-                        filePreviewsContainer.style.marginTop = "15px";
+                            document.getElementById("file-previews");
+                        filePreviewsContainer.innerHTML = ""; // Clear existing previews
 
                         if (files && files.length > 0) {
                             // Add files to dropdown for operations
@@ -1034,27 +1155,75 @@
                             });
 
                             messageDiv.textContent = "";
-                            fileManagementDiv.style.display = "block";
-
-                            // Add the file previews container after the select
-                            if (document.getElementById("file-previews")) {
-                                fileManagementDiv.removeChild(
-                                    document.getElementById("file-previews"),
-                                );
-                            }
-                            fileManagementDiv.appendChild(
-                                filePreviewsContainer,
-                            );
                         } else {
-                            messageDiv.textContent = "No files found.";
-                            fileManagementDiv.style.display = "none";
+                            messageDiv.textContent = "No image files found.";
+                            filePreviewsContainer.innerHTML =
+                                "<p>No images available</p>";
                         }
                     })
                     .catch((error) => {
                         console.error("Error listing files:", error);
                         messageDiv.textContent = "Error listing files.";
-                        fileManagementDiv.style.display = "none";
                     });
+            }
+
+            // New function to list all files in LittleFS
+            function listAllFiles() {
+                fetch("/listall")
+                    .then((response) => response.json())
+                    .then((files) => {
+                        allFilesList.innerHTML = ""; // Clear existing file list
+
+                        if (files && files.length > 0) {
+                            files.forEach((file) => {
+                                const fileItem = document.createElement("div");
+                                fileItem.className = "file-item";
+
+                                const fileName = document.createElement("div");
+                                fileName.className = "file-name";
+                                fileName.textContent = file.name;
+
+                                const fileSize = document.createElement("div");
+                                fileSize.className = "file-size";
+                                fileSize.textContent = formatFileSize(
+                                    file.size,
+                                );
+
+                                const downloadBtn =
+                                    document.createElement("button");
+                                downloadBtn.className = "download-btn-sm";
+                                downloadBtn.textContent = "Download";
+                                downloadBtn.addEventListener("click", () => {
+                                    downloadFile(file.name);
+                                });
+
+                                fileItem.appendChild(fileName);
+                                fileItem.appendChild(fileSize);
+                                fileItem.appendChild(downloadBtn);
+
+                                allFilesList.appendChild(fileItem);
+                            });
+                        } else {
+                            allFilesList.innerHTML =
+                                "<p>No files found in storage</p>";
+                        }
+                    })
+                    .catch((error) => {
+                        console.error("Error listing all files:", error);
+                        allFilesList.innerHTML =
+                            "<p>Error loading file list</p>";
+                    });
+            }
+
+            // Function to download a file from LittleFS
+            function downloadFile(filename) {
+                const downloadUrl = `/download?filename=${encodeURIComponent(filename)}`;
+                const link = document.createElement("a");
+                link.href = downloadUrl;
+                link.download = filename;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
             }
 
             // Helper function to format file size
@@ -1090,6 +1259,18 @@
                 filenameLabel.style.textOverflow = "ellipsis";
                 filenameLabel.style.whiteSpace = "nowrap";
 
+                // Add download button to preview card
+                const downloadBtn = document.createElement("button");
+                downloadBtn.className = "download-btn-sm";
+                downloadBtn.textContent = "⬇";
+                downloadBtn.title = "Download file";
+                downloadBtn.style.marginTop = "5px";
+
+                downloadBtn.addEventListener("click", (e) => {
+                    e.stopPropagation(); // Prevent clicking the entire card
+                    downloadFile(file.name);
+                });
+
                 // Add loading indicator
                 const loadingIndicator = document.createElement("div");
                 loadingIndicator.textContent = "Loading...";
@@ -1097,6 +1278,7 @@
                 previewCard.appendChild(previewCanvas);
                 previewCard.appendChild(loadingIndicator);
                 previewCard.appendChild(filenameLabel);
+                previewCard.appendChild(downloadBtn);
                 container.appendChild(previewCard);
 
                 // Fetch image data for preview
@@ -1180,7 +1362,10 @@
                             }
                         })
                         .then((message) => {
-                            alert(message);
+                            messageDiv.textContent = message;
+                            setTimeout(() => {
+                                messageDiv.textContent = "";
+                            }, 3000);
                             listFiles(); // Refresh the list after deletion
                         })
                         .catch((error) => {
@@ -1200,6 +1385,11 @@
                 fetch(`/load?filename=${encodeURIComponent(filename)}`)
                     .then((response) => {
                         if (response.ok) {
+                            messageDiv.textContent =
+                                "Image loaded to LED panel!";
+                            setTimeout(() => {
+                                messageDiv.textContent = "";
+                            }, 3000);
                             return response.text();
                         } else {
                             throw new Error("Failed to load file.");

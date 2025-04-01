@@ -184,6 +184,34 @@ void setup() {
     request->send(200, "application/json", imageList);
   });
 
+  // NEW: Route to download files from LittleFS
+  server.on("/download", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (!request->hasParam("filename")) {
+      request->send(400, "text/plain", "Missing filename parameter");
+      return;
+    }
+
+    String filename = request->getParam("filename")->value();
+    String filePath = "/" + filename;
+
+    if (!LittleFS.exists(filePath)) {
+      request->send(404, "text/plain", "File not found");
+      return;
+    }
+
+    File file = LittleFS.open(filePath, "r");
+    if (!file) {
+      request->send(500, "text/plain", "Failed to open file");
+      return;
+    }
+
+    // Set content disposition to attachment to trigger download
+    AsyncWebServerResponse *response = request->beginResponse(LittleFS, filePath,
+                                       "application/octet-stream");
+    response->addHeader("Content-Disposition", "attachment; filename=" + filename);
+    request->send(response);
+  });
+
   // Serve image data for preview
   server.on("/images/*", HTTP_GET, [](AsyncWebServerRequest *request) {
     String path = request->url();
@@ -248,6 +276,12 @@ void setup() {
     }
   });
 
+  // NEW: List all files in LittleFS (not just images)
+  server.on("/listall", HTTP_GET, [](AsyncWebServerRequest *request) {
+    String fileList = listAllFilesOnLittleFS();
+    request->send(200, "application/json", fileList);
+  });
+
   // Start server
   server.begin();
 
@@ -289,7 +323,7 @@ void loop() {
     buttonLongPressed = false;  // Reset long press flag
     delay(50);  // Debounce delay
   }
-  
+
   // Button is being held down
   if (currentButtonState == LOW && lastButtonState == LOW) {
     // Check for long press threshold
@@ -298,7 +332,7 @@ void loop() {
       // Long press detected, toggle slideshow
       slideshowActive = !slideshowActive;
       buttonLongPressed = true;  // Mark that we've handled this long press
-      
+
       if (slideshowActive) {
         Serial.println("Slideshow started");
         // Initialize slideshow timing
@@ -311,7 +345,7 @@ void loop() {
       delay(100);
     }
   }
-  
+
   // Button released (transition from LOW to HIGH)
   if (currentButtonState == HIGH && lastButtonState == LOW) {
     // Only handle as short press if the long press action wasn't taken
@@ -322,7 +356,7 @@ void loop() {
     }
     delay(50);  // Debounce delay
   }
-  
+
   // Run slideshow if active
   if (slideshowActive) {
     unsigned long currentTime = millis();
@@ -335,6 +369,34 @@ void loop() {
   // Update the last button state
   lastButtonState = currentButtonState;
   delay(100);
+}
+
+// NEW: List all files in LittleFS, not just image files
+String listAllFilesOnLittleFS() {
+  String fileList = "[";
+  File root = LittleFS.open("/");
+  File file = root.openNextFile();
+
+  bool first = true;
+  while (file) {
+    if (!first) {
+      fileList += ",";
+    }
+
+    // Get file size
+    size_t fileSize = file.size();
+    String filename = String(file.name());
+
+    // Create a JSON object for each file
+    fileList += "{\"name\":\"" + filename + "\",";
+    fileList += "\"size\":" + String(fileSize) + "}";
+
+    first = false;
+    file = root.openNextFile();
+  }
+
+  fileList += "]";
+  return fileList;
 }
 
 uint8_t getRowMajorIndex(uint8_t x, uint8_t y) {
