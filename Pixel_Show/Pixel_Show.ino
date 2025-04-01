@@ -24,7 +24,7 @@
 CRGB leds[NUM_LEDS];
 
 // Button configuration
-#define BUTTON_PIN 0       // GPIO0 connected to the button
+#define BUTTON_PIN 0  // GPIO0 connected to the button
 bool lastButtonState = HIGH;
 bool currentButtonState;
 
@@ -167,7 +167,7 @@ void setup() {
     }
 
     request->send(200, "text/plain", "Image saved to LittleFS!");
-    });
+  });
 
   // List files on LittleFS
   server.on("/list", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -178,7 +178,7 @@ void setup() {
   // Serve image data for preview
   server.on("/images/*", HTTP_GET, [](AsyncWebServerRequest *request) {
     String path = request->url();
-    String filename = path.substring(8); // Remove "/images/" prefix
+    String filename = path.substring(8);  // Remove "/images/" prefix
 
     Serial.print("Loading image preview: ");
     Serial.println(filename);
@@ -297,7 +297,7 @@ void loop() {
 }
 
 uint8_t getRowMajorIndex(uint8_t x, uint8_t y) {
-    return y * N_X + x;
+  return y * N_X + x;
 }
 /**
  * Converts X,Y coordinates to LED index for a U/N-shaped serpentine pattern
@@ -504,7 +504,6 @@ bool loadImageFromLittleFS(const String &filename, uint8_t colors[][3], uint8_t 
   return true;
 }
 
-
 /**
  * Lists all files with ".pxl" extension on LittleFS with metadata.
  */
@@ -545,9 +544,9 @@ String generatePreviewData(uint8_t colors[][3], uint8_t numXPixels, uint8_t numY
   // Calculate the size needed for the JSON document
   // Each pixel needs 3 integers + brackets and commas
   const size_t pixelCount = numXPixels * numYPixels;
-  const size_t capacity = JSON_OBJECT_SIZE(3) + // width, height, pixels array
-                          JSON_ARRAY_SIZE(pixelCount) + // pixels array
-                          pixelCount * JSON_ARRAY_SIZE(3); // RGB values for each pixel
+  const size_t capacity = JSON_OBJECT_SIZE(3) +             // width, height, pixels array
+                          JSON_ARRAY_SIZE(pixelCount) +     // pixels array
+                          pixelCount * JSON_ARRAY_SIZE(3);  // RGB values for each pixel
 
   DynamicJsonDocument doc(capacity);
 
@@ -557,9 +556,9 @@ String generatePreviewData(uint8_t colors[][3], uint8_t numXPixels, uint8_t numY
   JsonArray pixels = doc.createNestedArray("pixels");
   for (size_t i = 0; i < pixelCount; i++) {
     JsonArray pixel = pixels.createNestedArray();
-    pixel.add(colors[i][0]); // R
-    pixel.add(colors[i][1]); // G
-    pixel.add(colors[i][2]); // B
+    pixel.add(colors[i][0]);  // R
+    pixel.add(colors[i][1]);  // G
+    pixel.add(colors[i][2]);  // B
   }
 
   String result;
@@ -639,7 +638,6 @@ bool processPixelData(const String &pixelData, uint8_t colors[][3]) {
       colorComponent = 0;
       ledIndex++;
     }
-
     // Move to next value
     startIdx = endIdx + 1;
   }
@@ -650,6 +648,5 @@ bool processPixelData(const String &pixelData, uint8_t colors[][3]) {
                   NUM_LEDS, ledIndex);
     return false;
   }
-
   return true;
 }
