@@ -33,6 +33,14 @@ String imageFilenames[256];  // Assuming a maximum of 256 images
 int currentImageIndex = 0;
 int totalImages = 0;
 
+// Slide show feature variables
+unsigned long buttonPressStartTime = 0;
+unsigned long longPressThreshold = 2000; // 1 second for long press
+bool buttonLongPressed = false;  // Track if long press action was already taken
+bool slideshowActive = false;
+unsigned long lastSlideChangeTime = 0;
+unsigned long slideInterval = 5000; // Change image every 5 seconds
+
 // Function prototypes
 uint8_t getRowMajorIndex(uint8_t x, uint8_t y);
 uint8_t getUNShapeIndex(uint8_t x, uint8_t y);  // Define before use
@@ -46,6 +54,7 @@ bool deleteImageFromLittleFS(const String &filename);
 String generatePreviewData(uint8_t colors[][3], uint8_t numXPixels, uint8_t numYPixels);
 void displayImage(uint8_t colors[][3]);
 bool processPixelData(const String &pixelData, uint8_t colors[][3]);
+void nextImage();
 
 // Function pointer type for index calculation
 typedef uint8_t (*IndexFunction)(uint8_t, uint8_t);
@@ -274,26 +283,58 @@ void loop() {
   // Read the current state of the button
   currentButtonState = digitalRead(BUTTON_PIN);
 
-  // Check if the button was pressed (transition from HIGH to LOW)
+  // Button press started (transition from HIGH to LOW)
   if (currentButtonState == LOW && lastButtonState == HIGH) {
-    delay(200);  // Debounce delay
-
-    // Load and display the next image
-    if (totalImages > 0) {
-      currentImageIndex = (currentImageIndex + 1) % totalImages;
-      String filename = imageFilenames[currentImageIndex];
-      uint8_t colors[NUM_LEDS][3];
-      uint8_t numXPixels = N_X;
-      uint8_t numYPixels = N_Y;
-
-      if (loadImageFromLittleFS(filename, colors, numXPixels, numYPixels)) {
-        displayImage(colors);
+    buttonPressStartTime = millis();
+    buttonLongPressed = false;  // Reset long press flag
+    delay(50);  // Debounce delay
+  }
+  
+  // Button is being held down
+  if (currentButtonState == LOW && lastButtonState == LOW) {
+    // Check for long press threshold
+    unsigned long pressDuration = millis() - buttonPressStartTime;
+    if (pressDuration >= longPressThreshold && !buttonLongPressed) {
+      // Long press detected, toggle slideshow
+      slideshowActive = !slideshowActive;
+      buttonLongPressed = true;  // Mark that we've handled this long press
+      
+      if (slideshowActive) {
+        Serial.println("Slideshow started");
+        // Initialize slideshow timing
+        lastSlideChangeTime = millis();
+      } else {
+        Serial.println("Slideshow stopped");
       }
+      FastLED.showColor(CRGB::Black);
+      // Small delay to debounce
+      delay(100);
+    }
+  }
+  
+  // Button released (transition from LOW to HIGH)
+  if (currentButtonState == HIGH && lastButtonState == LOW) {
+    // Only handle as short press if the long press action wasn't taken
+    unsigned long pressDuration = millis() - buttonPressStartTime;
+    if (pressDuration < longPressThreshold && !buttonLongPressed && !slideshowActive) {
+      // This was a short press, and we're not in slideshow mode
+      nextImage();
+    }
+    delay(50);  // Debounce delay
+  }
+  
+  // Run slideshow if active
+  if (slideshowActive) {
+    unsigned long currentTime = millis();
+    if (currentTime - lastSlideChangeTime >= slideInterval) {
+      nextImage();
+      lastSlideChangeTime = currentTime;
     }
   }
 
   // Update the last button state
   lastButtonState = currentButtonState;
+  delay(100);
 }
 
 uint8_t getRowMajorIndex(uint8_t x, uint8_t y) {
@@ -649,4 +690,21 @@ bool processPixelData(const String &pixelData, uint8_t colors[][3]) {
     return false;
   }
   return true;
+}
+
+// Create a separate function to show the next image (extracted from the existing code)
+void nextImage() {
+  if (totalImages > 0) {
+    currentImageIndex = (currentImageIndex + 1) % totalImages;
+    String filename = imageFilenames[currentImageIndex];
+    uint8_t colors[NUM_LEDS][3];
+    uint8_t numXPixels = N_X;
+    uint8_t numYPixels = N_Y;
+
+    if (loadImageFromLittleFS(filename, colors, numXPixels, numYPixels)) {
+      displayImage(colors);
+      Serial.print("Showing image: ");
+      Serial.println(filename);
+    }
+  }
 }
