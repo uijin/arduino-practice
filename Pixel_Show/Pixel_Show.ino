@@ -35,39 +35,38 @@ int totalImages = 0;
 
 // Slide show feature variables
 unsigned long buttonPressStartTime = 0;
-unsigned long longPressThreshold = 2000; // 1 second for long press
-bool buttonLongPressed = false;  // Track if long press action was already taken
+unsigned long longPressThreshold = 2000;  // 1 second for long press
+bool buttonLongPressed = false;           // Track if long press action was already taken
 bool slideshowActive = false;
 unsigned long lastSlideChangeTime = 0;
-unsigned long slideInterval = 5000; // Change image every 5 seconds
+unsigned long slideInterval = 5000;  // Change image every 5 seconds
 
 // Function prototypes
 uint8_t getRowMajorIndex(uint8_t x, uint8_t y);
-uint8_t getUNShapeIndex(uint8_t x, uint8_t y);  // Define before use
-uint8_t get2ShapeIndex(uint8_t x, uint8_t y);
-void drawDiagonalLine(CRGB color);
-void drawHorizontalLine(uint8_t y, CRGB color);
+uint8_t getVerticalZigzagIndex(uint8_t x, uint8_t y);  // Renamed from getUNShapeIndex
+uint8_t getHorizontalZigzagIndex(uint8_t x, uint8_t y); // Renamed from get2ShapeIndex
+void drawDiagonalTestPattern(CRGB color); // Renamed from drawDiagonalLine
+void drawHorizontalTestPattern(uint8_t y, CRGB color); // Renamed from drawHorizontalLine
 bool saveImageToLittleFS(const String &filename, uint8_t colors[][3], uint8_t numXPixels, uint8_t numYPixels);
 bool loadImageFromLittleFS(const String &filename, uint8_t colors[][3], uint8_t &numXPixels, uint8_t &numYPixels);
 String listImagesOnLittleFS();
 bool deleteImageFromLittleFS(const String &filename);
 String generatePreviewData(uint8_t colors[][3], uint8_t numXPixels, uint8_t numYPixels);
-void displayImage(uint8_t colors[][3]);
-bool processPixelData(const String &pixelData, uint8_t colors[][3]);
+void renderImageToLedMatrix(uint8_t colors[][3]); // Renamed from displayImage
+bool parseRgbStringToColorArray(const String &pixelData, uint8_t colors[][3]); // Renamed from processPixelData
 void nextImage();
-inline void rotate0(uint8_t &x, uint8_t &y) {}
-void rotate180degree(uint8_t &x, uint8_t &y);
-
+inline void applyNoRotation(uint8_t &x, uint8_t &y) {} // Renamed from rotate0
+void rotateUpsideDown(uint8_t &x, uint8_t &y); // Renamed from rotate180degree
 
 // Function pointer type for index calculation
 typedef uint8_t (*IndexFunction)(uint8_t, uint8_t);
-typedef void (*RotateFunction)(uint8_t&, uint8_t&);
+typedef void (*RotateFunction)(uint8_t &, uint8_t &);
 
 // Function pointer variable
-IndexFunction getLedPanelIndex = getUNShapeIndex;  // Default to getUNShapeIndex
-RotateFunction rotateCoordinates = rotate180degree;
+IndexFunction getLedPanelIndex = getVerticalZigzagIndex;  // Default to getVerticalZigzagIndex
+RotateFunction rotateCoordinates = rotateUpsideDown;
 
-uint8_t getLedIndex(uint8_t x, uint8_t y) {
+uint8_t mapToPhysicalLedIndex(uint8_t x, uint8_t y) {  // Renamed from getLedIndex
   // Apply rotation to coordinates before mapping to physical LEDs
   uint8_t xDisplay = x, yDisplay = y;
   rotateCoordinates(xDisplay, yDisplay);
@@ -92,15 +91,15 @@ void setup() {
   FastLED.setTemperature(Halogen);
 
   // LED Panel Test
-  drawHorizontalLine(0, CRGB::Red);
-  drawHorizontalLine(1, CRGB::Green);
-  drawHorizontalLine(2, CRGB::Blue);
-  drawHorizontalLine(3, CRGB::Purple);
+  drawHorizontalTestPattern(0, CRGB::Red);    // Updated function name
+  drawHorizontalTestPattern(1, CRGB::Green);  // Updated function name
+  drawHorizontalTestPattern(2, CRGB::Blue);   // Updated function name
+  drawHorizontalTestPattern(3, CRGB::Purple); // Updated function name
   FastLED.show();
 
   // Connect to Wi-Fi
   WiFi.begin(ssid, password);
-  for (uint8_t i=0; i<10 && WiFi.status() != WL_CONNECTED; i++) {
+  for (uint8_t i = 0; i < 10 && WiFi.status() != WL_CONNECTED; i++) {
     delay(1000);
     Serial.println("Connecting to WiFi...");
   }
@@ -112,7 +111,7 @@ void setup() {
     drawIpAddress(WiFi.localIP());
   } else {
     Serial.println("Draw diagonal line when not connected to Wi-Fi");
-    drawDiagonalLine(CRGB::White);
+    drawDiagonalTestPattern(CRGB::White);  // Updated function name
   }
   FastLED.show();
   delay(1000);
@@ -124,7 +123,7 @@ void setup() {
   // if (loadImageFromLittleFS("current_image.pxl", savedColors, savedNumXPixels, savedNumYPixels)) {
   //   Serial.println("Load image after reboot");
   //   // --- DISPLAY ON LED PANEL ---
-  //   displayImage(savedColors);
+  //   renderImageToLedMatrix(savedColors); // Updated function name
   // }
 
   // Initialize button pin
@@ -169,13 +168,13 @@ void setup() {
 
     // Process the pixel data
     uint8_t colors[NUM_LEDS][3];
-    if (!processPixelData(pixelData, colors)) {
+    if (!parseRgbStringToColorArray(pixelData, colors)) {  // Updated function name
       request->send(400, "text/plain", "Invalid pixel data format");
       return;
     }
 
     // Display on LED panel
-    displayImage(colors);
+    renderImageToLedMatrix(colors);  // Updated function name
     request->send(200, "text/plain", "Image received and displayed!");
   });
 
@@ -203,7 +202,7 @@ void setup() {
 
     // Process the pixel data
     uint8_t colors[NUM_LEDS][3];
-    if (!processPixelData(pixelData, colors)) {
+    if (!parseRgbStringToColorArray(pixelData, colors)) {  // Updated function name
       request->send(400, "text/plain", "Invalid pixel data format");
       return;
     }
@@ -250,7 +249,7 @@ void setup() {
 
     // Set content disposition to attachment to trigger download
     AsyncWebServerResponse *response = request->beginResponse(LittleFS, filePath,
-                                       "application/octet-stream");
+                                                              "application/octet-stream");
     response->addHeader("Content-Disposition", "attachment; filename=" + filename);
     request->send(response);
   });
@@ -311,7 +310,7 @@ void setup() {
 
     if (loadImageFromLittleFS(filename, loadedColors, loadedNumXPixels, loadedNumYPixels)) {
       Serial.println("Image loaded from LittleFS");
-      displayImage(loadedColors);
+      renderImageToLedMatrix(loadedColors);  // Updated function name
       request->send(200, "text/plain", "Image loaded and displayed!");
 
     } else {
@@ -337,7 +336,7 @@ void loop() {
   if (currentButtonState == LOW && lastButtonState == HIGH) {
     buttonPressStartTime = millis();
     buttonLongPressed = false;  // Reset long press flag
-    delay(50);  // Debounce delay
+    delay(50);                  // Debounce delay
   }
 
   // Button is being held down
@@ -418,8 +417,9 @@ String listAllFilesOnLittleFS() {
 uint8_t getRowMajorIndex(uint8_t x, uint8_t y) {
   return y * N_X + x;
 }
+
 /**
- * Converts X,Y coordinates to LED index for a U/N-shaped serpentine pattern
+ * Converts X,Y coordinates to LED index for a vertical zigzag serpentine pattern
  * For counterclockwise rotated 90 degrees S-shape panel.
  *
  * In this pattern, even columns run bottom to top, odd columns run top to bottom:
@@ -432,7 +432,7 @@ uint8_t getRowMajorIndex(uint8_t x, uint8_t y) {
  * @param y Y-coordinate (row, 0-based, 0-15)
  * @return The LED index in the strip (0-255)
  */
-uint8_t getUNShapeIndex(uint8_t x, uint8_t y) {
+uint8_t getVerticalZigzagIndex(uint8_t x, uint8_t y) {  // Renamed from getUNShapeIndex
   // Check if x is even or odd to determine direction
   uint8_t odd_x = x % 2;
   if (odd_x == 0) {
@@ -444,20 +444,20 @@ uint8_t getUNShapeIndex(uint8_t x, uint8_t y) {
   }
 }
 
-void drawDiagonalLine(CRGB color) {
+void drawDiagonalTestPattern(CRGB color) {  // Renamed from drawDiagonalLine
   for (uint8_t i = 0; i < min(N_X, N_Y); i++) {
-    leds[getLedIndex(i, i)] = color;
+    leds[mapToPhysicalLedIndex(i, i)] = color;  // Updated function call
   }
 }
 
-void drawHorizontalLine(uint8_t y, CRGB color) {
+void drawHorizontalTestPattern(uint8_t y, CRGB color) {  // Renamed from drawHorizontalLine
   for (uint8_t x = 0; x < N_X; x++) {
-    leds[getLedIndex(x, y)] = color;
+    leds[mapToPhysicalLedIndex(x, y)] = color;  // Updated function call
   }
 }
 
 /**
- * Converts X,Y coordinates to LED index for a horizontally oriented S-shape pattern
+ * Converts X,Y coordinates to LED index for a horizontally oriented zigzag pattern
  *
  * In this pattern, even rows run left to right, odd rows run right to left:
  *
@@ -471,7 +471,7 @@ void drawHorizontalLine(uint8_t y, CRGB color) {
  * @param y Y-coordinate (row, 0-based)
  * @return The LED index in the strip
  */
-uint8_t get2ShapeIndex(uint8_t x, uint8_t y) {
+uint8_t getHorizontalZigzagIndex(uint8_t x, uint8_t y) {  // Renamed from get2ShapeIndex
   // Check if y is even or odd to determine direction
   uint8_t odd_y = y % 2;
   if (odd_y == 0) {
@@ -486,7 +486,7 @@ uint8_t get2ShapeIndex(uint8_t x, uint8_t y) {
 void draw3x3Digit(uint8_t offset_x, uint8_t offset_y, int digit, CRGB color) {
   const uint8_t DIGIT_WIDTH = 3;
   for (uint8_t i = 0; i < digit; i++) {
-    uint8_t index = getLedIndex(i % DIGIT_WIDTH + offset_x, i / DIGIT_WIDTH + offset_y);
+    uint8_t index = mapToPhysicalLedIndex(i % DIGIT_WIDTH + offset_x, i / DIGIT_WIDTH + offset_y);  // Updated function call
     leds[index] = color;
   }
 }
@@ -703,24 +703,24 @@ bool deleteImageFromLittleFS(const String &filename) {
 }
 
 /**
- * Displays an image on the LED panel with rotation applied
+ * Renders an image to the LED matrix with rotation applied
  * This function maps the stored pixel data to the physical LED matrix,
  * applying the current rotation function before calculating the final LED index.
  *
  * The process:
  * 1. Read RGB values from the colors array (stored in row-major order)
  * 2. Apply rotation to the coordinates using the rotateCoordinates function
- * 3. Map the rotated coordinates to physical LEDs using getLedIndex
+ * 3. Map the rotated coordinates to physical LEDs using mapToPhysicalLedIndex
  * 4. Set the LED color and show the result
  *
  * @param colors 2D array containing RGB values for each pixel [LED_index][RGB]
  */
-void displayImage(uint8_t colors[][3]) {
+void renderImageToLedMatrix(uint8_t colors[][3]) {  // Renamed from displayImage
   for (uint8_t y = 0; y < N_Y; y++) {
     for (uint8_t x = 0; x < N_X; x++) {
       uint8_t ledIndexFile = getRowMajorIndex(x, y);
       // Map to the physical LED index based on wiring pattern
-      uint8_t ledIndexDisplay = getLedIndex(x, y);
+      uint8_t ledIndexDisplay = mapToPhysicalLedIndex(x, y);  // Updated function call
 
       leds[ledIndexDisplay].r = colors[ledIndexFile][0];
       leds[ledIndexDisplay].g = colors[ledIndexFile][1];
