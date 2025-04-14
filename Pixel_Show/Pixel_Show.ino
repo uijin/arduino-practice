@@ -112,6 +112,7 @@ void setup() {
   } else {
     Serial.println("Draw diagonal line when not connected to Wi-Fi");
     drawDiagonalTestPattern(CRGB::White);  // Updated function name
+    slideshowActive = true;
   }
   FastLED.show();
   delay(1000);
@@ -731,15 +732,14 @@ void renderImageToLedMatrix(uint8_t colors[][3]) {  // Renamed from displayImage
 }
 
 /**
- * Process pixel data from HTTP request
- * This common function replaces the duplicated code in /upload and /save routes
- * Uses a more efficient parsing method than strtok()
+ * Parses a comma-separated string of RGB values into a color array
+ * Uses efficient parsing method to handle the incoming data from HTTP requests
  *
  * @param pixelData String containing comma-separated RGB values
  * @param colors Output array where the parsed RGB values will be stored
  * @return true if parsing was successful, false otherwise
  */
-bool processPixelData(const String &pixelData, uint8_t colors[][3]) {
+bool parseRgbStringToColorArray(const String &pixelData, uint8_t colors[][3]) {  // Renamed from processPixelData
   int dataLen = pixelData.length();
   int startIdx = 0;
   int endIdx = 0;
@@ -794,7 +794,7 @@ void nextImage() {
     uint8_t numYPixels = N_Y;
 
     if (loadImageFromLittleFS(filename, colors, numXPixels, numYPixels)) {
-      displayImage(colors);
+      renderImageToLedMatrix(colors);  // Updated function call
       Serial.print("Showing image: ");
       Serial.println(filename);
     }
@@ -814,8 +814,8 @@ void nextImage() {
  * @param x X-coordinate (passed by reference, will be modified)
  * @param y Y-coordinate (passed by reference, will be modified)
  */
-inline void rotate180degree(uint8_t &x, uint8_t &y) {
-    // First flip the coordinates (rotate 180 degrees)
-    x = N_X - 1 - x;
-    y = N_Y - 1 - y;
+inline void rotateUpsideDown(uint8_t &x, uint8_t &y) {  // Renamed from rotate180degree
+  // Flip the coordinates (rotate 180 degrees)
+  x = N_X - 1 - x;
+  y = N_Y - 1 - y;
 }
