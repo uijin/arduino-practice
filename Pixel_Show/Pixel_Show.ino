@@ -64,8 +64,15 @@ typedef uint8_t (*IndexFunction)(uint8_t, uint8_t);
 typedef void (*RotateFunction)(uint8_t&, uint8_t&);
 
 // Function pointer variable
-IndexFunction getLedIndex = getUNShapeIndex;  // Default to getUNShapeIndex
+IndexFunction getLedPanelIndex = getUNShapeIndex;  // Default to getUNShapeIndex
 RotateFunction rotateCoordinates = rotate180degree;
+
+uint8_t getLedIndex(uint8_t x, uint8_t y) {
+  // Apply rotation to coordinates before mapping to physical LEDs
+  uint8_t xDisplay = x, yDisplay = y;
+  rotateCoordinates(xDisplay, yDisplay);
+  return getLedPanelIndex(xDisplay, yDisplay);
+}
 
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
@@ -79,6 +86,18 @@ void setup() {
     return;
   }
 
+  FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);
+  FastLED.setBrightness(BRIGHTNESS);
+  // FastLED.setCorrection(TypicalPixelString);
+  FastLED.setTemperature(Halogen);
+
+  // LED Panel Test
+  drawHorizontalLine(0, CRGB::Red);
+  drawHorizontalLine(1, CRGB::Green);
+  drawHorizontalLine(2, CRGB::Blue);
+  drawHorizontalLine(3, CRGB::Purple);
+  FastLED.show();
+
   // Connect to Wi-Fi
   WiFi.begin(ssid, password);
   for (uint8_t i=0; i<10 && WiFi.status() != WL_CONNECTED; i++) {
@@ -86,25 +105,44 @@ void setup() {
     Serial.println("Connecting to WiFi...");
   }
 
-  // Print ESP32 IP address
-  Serial.println(WiFi.localIP());
-
-  FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);
-  FastLED.setBrightness(BRIGHTNESS);
-  // FastLED.setCorrection(TypicalPixelString);
-  FastLED.setTemperature(Halogen);
-
-  // LED Panel Test
-  // Comment out these lines after testing
-  drawHorizontalLine(0, CRGB::Red);
-  drawHorizontalLine(1, CRGB::Green);
-  drawHorizontalLine(2, CRGB::Blue);
-  FastLED.show();
-  delay(3000);  // Display for 5 seconds
   FastLED.clear();
-
-  drawIpAddress(WiFi.localIP());
+  if (WiFi.status() == WL_CONNECTED) {
+    // Print ESP32 IP address
+    Serial.println(WiFi.localIP());
+    drawIpAddress(WiFi.localIP());
+  } else {
+    Serial.println("Draw diagonal line when not connected to Wi-Fi");
+    drawDiagonalLine(CRGB::White);
+  }
   FastLED.show();
+  delay(1000);
+
+  // // Load image from LittleFS and display
+  // uint8_t savedColors[NUM_LEDS][3];
+  // uint8_t savedNumXPixels = N_X;
+  // uint8_t savedNumYPixels = N_Y;
+  // if (loadImageFromLittleFS("current_image.pxl", savedColors, savedNumXPixels, savedNumYPixels)) {
+  //   Serial.println("Load image after reboot");
+  //   // --- DISPLAY ON LED PANEL ---
+  //   displayImage(savedColors);
+  // }
+
+  // Initialize button pin
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+  // Scan LittleFS for .pxl files
+  File root = LittleFS.open("/");
+  File file = root.openNextFile();
+  while (file) {
+    if (String(file.name()).endsWith(".pxl")) {
+      imageFilenames[totalImages] = String(file.name());
+      totalImages++;
+    }
+    file = root.openNextFile();
+  }
+
+  Serial.print("Total images found: ");
+  Serial.println(totalImages);
 
   // Route for root / web page
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -289,33 +327,6 @@ void setup() {
 
   // Start server
   server.begin();
-
-  // Load image from LittleFS and display
-  uint8_t savedColors[NUM_LEDS][3];
-  uint8_t savedNumXPixels = N_X;
-  uint8_t savedNumYPixels = N_Y;
-  if (loadImageFromLittleFS("current_image.pxl", savedColors, savedNumXPixels, savedNumYPixels)) {
-    Serial.println("Load image after reboot");
-    // --- DISPLAY ON LED PANEL ---
-    displayImage(savedColors);
-  }
-
-  // Initialize button pin
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
-
-  // Scan LittleFS for .pxl files
-  File root = LittleFS.open("/");
-  File file = root.openNextFile();
-  while (file) {
-    if (String(file.name()).endsWith(".pxl")) {
-      imageFilenames[totalImages] = String(file.name());
-      totalImages++;
-    }
-    file = root.openNextFile();
-  }
-
-  Serial.print("Total images found: ");
-  Serial.println(totalImages);
 }
 
 void loop() {
@@ -708,13 +719,8 @@ void displayImage(uint8_t colors[][3]) {
   for (uint8_t y = 0; y < N_Y; y++) {
     for (uint8_t x = 0; x < N_X; x++) {
       uint8_t ledIndexFile = getRowMajorIndex(x, y);
-
-      // Apply rotation to coordinates before mapping to physical LEDs
-      uint8_t xDisplay = x, yDisplay = y;
-      rotateCoordinates(xDisplay, yDisplay);
-
       // Map to the physical LED index based on wiring pattern
-      uint8_t ledIndexDisplay = getLedIndex(xDisplay, yDisplay);
+      uint8_t ledIndexDisplay = getLedIndex(x, y);
 
       leds[ledIndexDisplay].r = colors[ledIndexFile][0];
       leds[ledIndexDisplay].g = colors[ledIndexFile][1];
