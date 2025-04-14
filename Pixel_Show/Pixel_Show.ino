@@ -55,12 +55,17 @@ String generatePreviewData(uint8_t colors[][3], uint8_t numXPixels, uint8_t numY
 void displayImage(uint8_t colors[][3]);
 bool processPixelData(const String &pixelData, uint8_t colors[][3]);
 void nextImage();
+inline void rotate0(uint8_t &x, uint8_t &y) {}
+void rotate180degree(uint8_t &x, uint8_t &y);
+
 
 // Function pointer type for index calculation
 typedef uint8_t (*IndexFunction)(uint8_t, uint8_t);
+typedef void (*RotateFunction)(uint8_t&, uint8_t&);
 
 // Function pointer variable
 IndexFunction getLedIndex = getUNShapeIndex;  // Default to getUNShapeIndex
+RotateFunction rotateCoordinates = rotate180degree;
 
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
@@ -76,7 +81,7 @@ void setup() {
 
   // Connect to Wi-Fi
   WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
+  for (uint8_t i=0; i<10 && WiFi.status() != WL_CONNECTED; i++) {
     delay(1000);
     Serial.println("Connecting to WiFi...");
   }
@@ -686,11 +691,30 @@ bool deleteImageFromLittleFS(const String &filename) {
   }
 }
 
+/**
+ * Displays an image on the LED panel with rotation applied
+ * This function maps the stored pixel data to the physical LED matrix,
+ * applying the current rotation function before calculating the final LED index.
+ *
+ * The process:
+ * 1. Read RGB values from the colors array (stored in row-major order)
+ * 2. Apply rotation to the coordinates using the rotateCoordinates function
+ * 3. Map the rotated coordinates to physical LEDs using getLedIndex
+ * 4. Set the LED color and show the result
+ *
+ * @param colors 2D array containing RGB values for each pixel [LED_index][RGB]
+ */
 void displayImage(uint8_t colors[][3]) {
   for (uint8_t y = 0; y < N_Y; y++) {
     for (uint8_t x = 0; x < N_X; x++) {
       uint8_t ledIndexFile = getRowMajorIndex(x, y);
-      uint8_t ledIndexDisplay = getLedIndex(x, y);
+
+      // Apply rotation to coordinates before mapping to physical LEDs
+      uint8_t xDisplay = x, yDisplay = y;
+      rotateCoordinates(xDisplay, yDisplay);
+
+      // Map to the physical LED index based on wiring pattern
+      uint8_t ledIndexDisplay = getLedIndex(xDisplay, yDisplay);
 
       leds[ledIndexDisplay].r = colors[ledIndexFile][0];
       leds[ledIndexDisplay].g = colors[ledIndexFile][1];
@@ -769,4 +793,23 @@ void nextImage() {
       Serial.println(filename);
     }
   }
+}
+
+/**
+ * Rotates coordinates 180 degrees for display on an upside-down panel
+ * This function transforms x,y coordinates by flipping both horizontally and vertically
+ * so that images appear correct on a panel mounted upside-down.
+ *
+ * For example, with a 16x16 panel:
+ * - (0,0) becomes (15,15)
+ * - (1,0) becomes (14,15)
+ * - (0,1) becomes (15,14)
+ *
+ * @param x X-coordinate (passed by reference, will be modified)
+ * @param y Y-coordinate (passed by reference, will be modified)
+ */
+inline void rotate180degree(uint8_t &x, uint8_t &y) {
+    // First flip the coordinates (rotate 180 degrees)
+    x = N_X - 1 - x;
+    y = N_Y - 1 - y;
 }
