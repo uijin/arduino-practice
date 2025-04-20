@@ -12,11 +12,13 @@ This project creates a mesmerizing, realistic fire effect on a 16x16 LED matrix 
 - 16x16 LED Matrix using WS2812B LEDs (256 LEDs total)
 - 5V power supply (capable of providing enough current for all LEDs at full brightness)
 - Connecting wires
+- Momentary push button (for palette switching)
 
 ## Wiring
 
 - Connect the LED data input to pin 6 on the Arduino Pro Micro
 - Connect power (5V) and ground to the LED matrix power inputs
+- Connect the push button between pin 9 and GND
 - Ensure proper current capacity for the power supply (each LED can draw up to 60mA at full brightness)
 
 ## Features
@@ -24,8 +26,10 @@ This project creates a mesmerizing, realistic fire effect on a 16x16 LED matrix 
 - Realistic fire animation using Perlin noise algorithm
 - Adjustable parameters for customization
 - Multiple color palettes (orange/red fire, electric green, electric blue)
+- Interactive palette switching via button press
 - Serpentine LED layout support
 - Optimized noise calculation for smoother animation
+- Power management to prevent current spikes during color changes
 
 ## Configuration Options
 
@@ -34,7 +38,7 @@ The code includes several parameters you can adjust to customize the animation:
 - `BRIGHTNESS`: Overall brightness (0-255)
 - `SCALE_XY`: Scale for noise (1-100) - affects the size of the flame patterns
 - `SPEED_Y`: Vertical movement speed (1-6) - controls how quickly the flames rise
-- `PALETTE_TYPE`: Color scheme selection (0=fire, 1=green, 2=blue)
+- `DEBOUNCE_DELAY`: Milliseconds for button debounce handling
 - `FRAME_DELAY`: Milliseconds between frames (controls animation speed)
 
 ## Code Structure
@@ -43,6 +47,7 @@ The code includes several parameters you can adjust to customize the animation:
 - **Flame Generation**: Creates vertical fade-out effect with subtle variations
 - **Color Palettes**: Three predefined color schemes for different fire effects
 - **Matrix Mapping**: Supports serpentine LED layouts common in matrix displays
+- **Button Handling**: Debounced input for palette switching
 
 ## Optimization
 
@@ -50,6 +55,7 @@ The code includes an optimized Perlin noise calculation system that:
 - Caches recent noise values to reduce computational load
 - Uses a simple hashing function to identify and reuse calculations
 - Maintains consistent noise values across frames for smoother animation
+- Power limiting to prevent Arduino resets during palette changes
 
 ## Installation
 
@@ -61,6 +67,21 @@ The code includes an optimized Perlin noise calculation system that:
 ## Customization
 
 Feel free to modify the color palettes, animation speeds, or noise parameters to create your own unique fire effects. The code is well-commented to help you understand each parameter's function.
+
+## Changelog
+
+### Version 1.1.0 (Current)
+- Added push button support on pin 9 for changing color palettes
+- Implemented palette switching between fire (red/orange), green, and blue effects
+- Added power management to prevent current spikes during color changes
+- Optimized memory usage with pre-initialized palettes
+- Improved button debouncing for reliable operation
+
+### Version 1.0.0 (Original)
+- Initial implementation with Perlin noise-based fire effect
+- Fixed palette selection via code constant
+- Optimized noise calculation with caching
+- Serpentine LED layout support
 
 ## Credits
 
