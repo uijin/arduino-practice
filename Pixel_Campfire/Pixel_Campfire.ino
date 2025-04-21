@@ -1,7 +1,6 @@
-// Perlin noise fire effect for Arduino Pro Micro with 16x16 LED matrix
-// Modified from original by Yaroslaw Turbin
-// https://www.reddit.com/r/FastLED/comments/hgu16i/my_fire_effect_implementation_based_on_perlin/
-// With optimized Perlin noise calculation for smoother animation
+// LED Matrix Effects for Arduino Pro Micro with 16x16 LED matrix
+// Including: Fire effects, Matrix Digital Rain, and Shiny Sun Animation
+// Supports multiple color options for fire effects
 
 #include <FastLED.h>
 
@@ -23,12 +22,34 @@
 #define Z_SPEED      2     // Z dimension drift - flame wavering
 #define FRAME_DELAY  50    // Milliseconds between frames
 
+// Matrix Rain Parameters
+#define NUM_STREAMS 10       // Number of rain streams
+#define MIN_SPEED 1          // Minimum stream speed
+#define MAX_SPEED 5          // Maximum stream speed
+#define TRAIL_LENGTH 5       // Length of the fading trail
+#define SPAWN_RATE 40        // Chance of spawning a new drop (higher = less frequent)
+#define HUE_BASE 100         // Base hue for the Matrix green (adjust to get the right green)
+#define HUE_RANGE 30         // How much the hue can vary
+
+// Sun Animation Parameters
+#define SUN_CENTER_X 7.5     // X center of the sun (use 7.5 for center of 16x16 matrix)
+#define SUN_CENTER_Y 7.5     // Y center of the sun (use 7.5 for center of 16x16 matrix)
+#define SUN_CORE_SIZE 3.0    // Size of the sun's core
+#define NUM_RAYS 8           // Number of sun rays
+#define RAY_LENGTH 8.0       // Maximum length of rays
+#define RAY_WIDTH 1.5        // Width of rays
+#define RAY_SPEED 10         // Speed of ray animation (higher = faster)
+#define SHIMMER_AMOUNT 30    // Amount of shimmer (0-255)
+#define CORE_PULSE_SPEED 8   // Speed of core pulsing
+#define RAY_HUE 32           // Base hue for rays (32 = yellow-orange)
+#define CORE_HUE 30          // Base hue for core (30 = more yellow)
+
 // LED array
 CRGB leds[NUM_LEDS];
 
 // Color palette variables
-uint8_t paletteIndex = 2;  // Start with blue (0=fire, 1=green, 2=blue)
-#define NUM_PALETTES 3     // Total number of palettes available
+uint8_t paletteIndex = 2;  // Start with blue (0=fire, 1=green, 2=blue, 3=matrix, 4=sun)
+#define NUM_PALETTES 5     // Total number of palettes available
 
 // Button debounce variables
 uint8_t lastButtonState = HIGH;    // Last state of the button (assuming pull-up resistor)
@@ -59,10 +80,33 @@ DEFINE_GRADIENT_PALETTE(electricBlueFirePal) {
     255, 255, 255, 255     // White
 };
 
+// Rain stream structure to track falling drops
+struct RainStream {
+  int x;           // X position
+  int y;           // Y position
+  int speed;       // How fast it falls (update every N frames)
+  int countdown;   // Frames until next movement
+  boolean active;  // Whether this stream is currently active
+  uint8_t hue;     // Color hue variation
+  uint8_t bright;  // Brightness of the lead drop
+};
+
+RainStream streams[NUM_STREAMS];
+
+// Sun animation timing variables
+uint8_t rayPhase = 0;
+uint8_t shimmerPhase = 0;
+uint32_t lastSunUpdate = 0;
+
 // Pre-initialize palettes
 CRGBPalette16 firePalette;
 CRGBPalette16 greenPalette;
 CRGBPalette16 bluePalette;
+
+// Animation cycle variables with prime number increments
+uint32_t x_offset = 0;
+uint32_t y_offset = 0;
+uint32_t z_offset = 0;
 
 // Function to map x,y coordinates to LED index accounting for serpentine layout
 uint16_t XY(uint8_t x, uint8_t y) {
@@ -135,7 +179,237 @@ uint16_t getOptimizedNoise(uint32_t x, uint32_t y, uint32_t z) {
     return noiseValue;
 }
 
+// Initialize or reset a rain stream
+void resetStream(int index, boolean firstRun) {
+  streams[index].x = random(WIDTH);
+
+  if (firstRun) {
+    // Distribute across the screen for initial setup
+    streams[index].y = random(HEIGHT);
+  } else {
+    // Start new streams at the top
+    streams[index].y = 0;
+
+    // Sometimes don't activate right away to avoid too many streams at once
+    streams[index].active = (random(100) < 70);  // 70% chance of activation
+  }
+
+  // Set random speed (update every N frames)
+  streams[index].speed = random(MIN_SPEED, MAX_SPEED + 1);
+  streams[index].countdown = streams[index].speed;
+
+  // Set slight color variation to add visual interest
+  streams[index].hue = HUE_BASE + random(-HUE_RANGE/2, HUE_RANGE/2);
+
+  // Lead character is brightest
+  streams[index].bright = 255;
+}
+
+// Update stream position
+void updateStream(int index) {
+  // Only process active streams
+  if (!streams[index].active) {
+    // Occasionally activate inactive streams
+    if (random(100) < 5) {  // 5% chance each frame
+      streams[index].active = true;
+    }
+    return;
+  }
+
+  // Count down to next movement
+  streams[index].countdown--;
+
+  // Time to update position
+  if (streams[index].countdown <= 0) {
+    // Reset countdown
+    streams[index].countdown = streams[index].speed;
+
+    // Move down one row
+    streams[index].y++;
+
+    // Reset if we've gone off the bottom
+    if (streams[index].y >= HEIGHT) {
+      resetStream(index, false);
+    }
+  }
+}
+
+// Draw the stream on the matrix
+void drawStream(int index) {
+  // Only draw active streams
+  if (!streams[index].active) {
+    return;
+  }
+
+  int x = streams[index].x;
+  int y = streams[index].y;
+
+  // Draw the lead dot (brightest)
+  if (y >= 0 && y < HEIGHT) {
+    leds[XY(x, y)] = CHSV(streams[index].hue, 255, streams[index].bright);
+  }
+
+  // Draw the trailing dots (fading)
+  for (int i = 1; i <= TRAIL_LENGTH; i++) {
+    if (y - i >= 0 && y - i < HEIGHT) {
+      // Calculate fading brightness for trail
+      uint8_t trailBrightness = streams[index].bright * (TRAIL_LENGTH - i + 1) / (TRAIL_LENGTH + 2);
+
+      // Set the LED with fading brightness and slightly shifted hue
+      leds[XY(x, y - i)] += CHSV(streams[index].hue + i * 2, 255, trailBrightness);
+    }
+  }
+
+  // Randomly change streams occasionally
+  if (random(100) < 2) {  // 2% chance each frame
+    // Adjust color, brightness or create branching effect
+    if (random(100) < 40) {  // 40% of those changes
+      // Create a "branch" by starting a new stream nearby if one is available
+      for (int i = 0; i < NUM_STREAMS; i++) {
+        if (!streams[i].active) {
+          streams[i].active = true;
+          streams[i].x = constrain(x + random(-1, 2), 0, WIDTH - 1);
+          streams[i].y = y - random(1, 3);
+          streams[i].speed = streams[index].speed + random(-1, 2);
+          streams[i].countdown = streams[i].speed;
+          streams[i].hue = streams[index].hue + random(-10, 11);
+          streams[i].bright = 220;
+          break;
+        }
+      }
+    }
+  }
+
+  // Occasionally spawn a new stream
+  if (random(100) < 100/SPAWN_RATE) {
+    for (int i = 0; i < NUM_STREAMS; i++) {
+      if (!streams[i].active) {
+        resetStream(i, false);
+        streams[i].active = true;
+        break;
+      }
+    }
+  }
+}
+
+// Draw the sun's core with pulsing effect
+void drawSunCore() {
+  // Calculate core radius with pulsing effect
+  float coreRadius = SUN_CORE_SIZE + sin(radians(rayPhase * CORE_PULSE_SPEED)) * 0.5;
+
+  // Calculate core brightness variation
+  uint8_t coreBrightness = 255 - SHIMMER_AMOUNT + (SHIMMER_AMOUNT * sin(radians(shimmerPhase * 2)));
+
+  // Draw the core as a filled circle
+  for (int y = 0; y < HEIGHT; y++) {
+    for (int x = 0; x < WIDTH; x++) {
+      // Calculate distance from center
+      float distance = sqrt(pow(x - SUN_CENTER_X, 2) + pow(y - SUN_CENTER_Y, 2));
+
+      // If inside core radius
+      if (distance <= coreRadius) {
+        // Brightest in the center, dimming toward edges with smooth falloff
+        float brightness = 255 * (1.0 - pow(distance / coreRadius, 2));
+
+        // Add shimmer effect
+        brightness = constrain(brightness + random(-10, 11), 0, 255);
+
+        // Apply core brightness variation
+        brightness = brightness * coreBrightness / 255;
+
+        // Determine color - yellowish but shifting toward white in center
+        uint8_t sat = map(distance, 0, coreRadius, 130, 240);  // Less saturation in center (more white)
+
+        // Set pixel color
+        leds[XY(x, y)] = CHSV(CORE_HUE, sat, brightness);
+      }
+    }
+  }
+}
+
+// Draw sun's rays
+void drawSunRays() {
+  // Animation phase for ray pulsing
+  float rayPulse = sin(radians(rayPhase * RAY_SPEED)) * 0.3 + 0.7;  // Range 0.4 to 1.0
+
+  // Draw each ray
+  for (int i = 0; i < NUM_RAYS; i++) {
+    // Calculate angle for this ray
+    float angle = (i * 360.0 / NUM_RAYS) + sin(radians(rayPhase)) * 5.0;  // Slight rotation effect
+
+    // Calculate current ray length (different rays pulse differently)
+    float rayLengthModifier = 0.7 + 0.3 * sin(radians(rayPhase * RAY_SPEED + i * 45));
+    float currentRayLength = RAY_LENGTH * rayLengthModifier * rayPulse;
+
+    // Draw this ray
+    drawRay(angle, currentRayLength);
+  }
+}
+
+// Draw a single ray at the specified angle and length
+void drawRay(float angle, float length) {
+  // Start from outside the core
+  float startDistance = SUN_CORE_SIZE;
+  float endDistance = SUN_CORE_SIZE + length;
+
+  // Draw ray as a series of points
+  for (float dist = startDistance; dist <= endDistance; dist += 0.3) {
+    // Make rays taper at the ends
+    float relativePos = (dist - startDistance) / (endDistance - startDistance);
+    float width = RAY_WIDTH * (1.0 - pow(relativePos - 0.5, 2) * 2.0);
+
+    // Draw a circle at this position along the ray to create width
+    for (float w = -width; w <= width; w += 0.5) {
+      // Calculate perpendicular angle for width
+      float perpAngle = angle + 90;
+
+      // Calculate coordinates
+      float rayX = SUN_CENTER_X + cos(radians(angle)) * dist + cos(radians(perpAngle)) * w;
+      float rayY = SUN_CENTER_Y + sin(radians(angle)) * dist + sin(radians(perpAngle)) * w;
+
+      // Check if within bounds
+      if (rayX >= 0 && rayX < WIDTH && rayY >= 0 && rayY < HEIGHT) {
+        int x = int(rayX);
+        int y = int(rayY);
+
+        // Brightness falls off along length and width
+        float brightness = 255 * (1.0 - relativePos) * (1.0 - pow(abs(w) / width, 2) * 0.8);
+
+        // Add shimmer effect
+        float shimmerEffect = SHIMMER_AMOUNT * sin(radians(shimmerPhase + dist * 20 + angle));
+        brightness = constrain(brightness + shimmerEffect, 0, 255);
+
+        // Color shifts slightly from center to tip
+        uint8_t hue = RAY_HUE + int(relativePos * 15);
+
+        // Set pixel, blending with existing value for smoother appearance
+        leds[XY(x, y)] += CHSV(hue, 180 - relativePos * 70, brightness);
+      }
+    }
+  }
+}
+
+// Draws the sun with core and rays
+void drawSun() {
+  // Update animation phases
+  uint32_t currentMillis = millis();
+  if (currentMillis - lastSunUpdate > 50) {  // 20 fps update rate
+    lastSunUpdate = currentMillis;
+    rayPhase += 3;          // Controls ray pulsation
+    shimmerPhase += 7;      // Controls shimmer effect
+  }
+
+  // Draw the sun's rays first (so core draws on top)
+  drawSunRays();
+
+  // Draw the sun's core
+  drawSunCore();
+}
+
 void setup() {
+    // Initialize serial for debugging
+    Serial.begin(9600);
+
     // Initialize palettes only once to avoid memory fragmentation
     firePalette = firepal;
     greenPalette = electricGreenFirePal;
@@ -157,12 +431,22 @@ void setup() {
         noiseCache[i][0] = 0xFFFF;  // Invalid hash
         noiseCache[i][1] = 0;
     }
-}
 
-// Animation cycle variables with prime number increments
-uint32_t x_offset = 0;
-uint32_t y_offset = 0;
-uint32_t z_offset = 0;
+    // Initialize all rain streams
+    for (int i = 0; i < NUM_STREAMS; i++) {
+        resetStream(i, true);
+    }
+
+    // Initialize Sun animation variables
+    lastSunUpdate = millis();
+    rayPhase = 0;
+    shimmerPhase = 0;
+
+    // Seed the random number generator
+    randomSeed(analogRead(0));
+
+    Serial.println("Setup complete");
+}
 
 void checkButtonAndChangePalette() {
     // Read the button state (LOW when pressed since we're using pull-up)
@@ -183,6 +467,8 @@ void checkButtonAndChangePalette() {
             if (buttonState == LOW) {
                 // Change to the next palette with special handling for fire
                 paletteIndex = (paletteIndex + 1) % NUM_PALETTES;
+                Serial.print("Changed to effect: ");
+                Serial.println(paletteIndex);
             }
         }
     }
@@ -191,15 +477,9 @@ void checkButtonAndChangePalette() {
     lastButtonState = reading;
 }
 
-void loop() {
-    // Check if the button was pressed to change the color palette
-    checkButtonAndChangePalette();
-
+void drawFireEffect() {
     // Get the current palette
     CRGBPalette16& myPal = getPalette();
-
-    // Set the brightness for this frame
-    FastLED.setBrightness(BRIGHTNESS);
 
     // Increment offsets using prime numbers and varying rates
     x_offset = (x_offset + X_SPEED) % 65521;  // Very slow x drift
@@ -229,6 +509,59 @@ void loop() {
             int index = XY(i, j);
             leds[index] = color;
         }
+    }
+}
+
+void drawMatrixRain() {
+    // Clear the display (but don't show yet)
+    fadeToBlackBy(leds, NUM_LEDS, 40);  // Fade existing LEDs for trail effect
+
+    // Update and draw each rain stream
+    for (int i = 0; i < NUM_STREAMS; i++) {
+        updateStream(i);
+        drawStream(i);
+    }
+}
+
+void loop() {
+    // Reset random seed to avoid pattern issues
+    randomSeed(millis());
+
+    // Check if the button was pressed to change the color palette
+    checkButtonAndChangePalette();
+
+    // Set the brightness for this frame
+    FastLED.setBrightness(BRIGHTNESS);
+
+    // Handle display clearing based on effect type
+    if (paletteIndex == 3) { // Matrix effect has its own fade-to-black
+        // Don't clear for Matrix effect
+    } else {
+        // Clear for fire and sun effects
+        FastLED.clear();
+    }
+
+    // Draw the selected effect
+    switch (paletteIndex) {
+        case 0:
+        case 1:
+        case 2:
+            // Fire effect with different color palettes
+            drawFireEffect();
+            break;
+        case 3:
+            // Matrix Digital Rain effect
+            drawMatrixRain();
+            break;
+        case 4:
+            // Sun animation effect
+            drawSun();
+            break;
+        default:
+            // Failsafe - reset to a known good state
+            paletteIndex = 0;
+            Serial.println("Reset to fire effect");
+            break;
     }
 
     FastLED.show();
