@@ -28,7 +28,9 @@
 #define MAX_SPEED 5          // Maximum stream speed
 #define TRAIL_LENGTH 5       // Length of the fading trail
 #define SPAWN_RATE 40        // Chance of spawning a new drop (higher = less frequent)
-#define HUE_BASE 100         // Base hue for the Matrix green (adjust to get the right green)
+#define MATRIX_GREEN_HUE 100 // Base hue for classic Matrix green
+#define MATRIX_BLUE_HUE 160  // Base hue for blue Matrix
+#define MATRIX_RED_HUE 0     // Base hue for red Matrix
 #define HUE_RANGE 30         // How much the hue can vary
 
 // Sun Animation Parameters
@@ -48,8 +50,8 @@
 CRGB leds[NUM_LEDS];
 
 // Color palette variables
-uint8_t paletteIndex = 2;  // Start with blue (0=fire, 1=green, 2=blue, 3=matrix, 4=sun)
-#define NUM_PALETTES 5     // Total number of palettes available
+uint8_t paletteIndex = 2;  // Start with blue (0=fire, 1=green, 2=blue, 3,4,5=matrix colors, 6=sun)
+#define NUM_PALETTES 7     // Total number of palettes available
 
 // Button debounce variables
 uint8_t lastButtonState = HIGH;    // Last state of the button (assuming pull-up resistor)
@@ -179,6 +181,13 @@ uint16_t getOptimizedNoise(uint32_t x, uint32_t y, uint32_t z) {
     return noiseValue;
 }
 
+// Initialize all rain streams with proper colors based on current palette
+void initializeStreams() {
+  for (int i = 0; i < NUM_STREAMS; i++) {
+    resetStream(i, true);
+  }
+}
+
 // Initialize or reset a rain stream
 void resetStream(int index, boolean firstRun) {
   streams[index].x = random(WIDTH);
@@ -198,8 +207,24 @@ void resetStream(int index, boolean firstRun) {
   streams[index].speed = random(MIN_SPEED, MAX_SPEED + 1);
   streams[index].countdown = streams[index].speed;
 
-  // Set slight color variation to add visual interest
-  streams[index].hue = HUE_BASE + random(-HUE_RANGE/2, HUE_RANGE/2);
+  // Set color based on the current palette index
+  uint8_t baseHue;
+  switch (paletteIndex) {
+    case 3: // Green Matrix
+      baseHue = MATRIX_GREEN_HUE;
+      break;
+    case 4: // Blue Matrix
+      baseHue = MATRIX_BLUE_HUE;
+      break;
+    case 5: // Red Matrix
+      baseHue = MATRIX_RED_HUE;
+      break;
+    default:
+      baseHue = MATRIX_GREEN_HUE;
+  }
+
+  // Add slight variation to the base hue
+  streams[index].hue = baseHue + random(-HUE_RANGE/2, HUE_RANGE/2);
 
   // Lead character is brightest
   streams[index].bright = 255;
@@ -433,9 +458,7 @@ void setup() {
     }
 
     // Initialize all rain streams
-    for (int i = 0; i < NUM_STREAMS; i++) {
-        resetStream(i, true);
-    }
+    initializeStreams();
 
     // Initialize Sun animation variables
     lastSunUpdate = millis();
@@ -465,8 +488,17 @@ void checkButtonAndChangePalette() {
             buttonState = reading;
 
             if (buttonState == LOW) {
-                // Change to the next palette with special handling for fire
+                // Store previous palette for transition
+                uint8_t previousPalette = paletteIndex;
+
+                // Change to the next palette
                 paletteIndex = (paletteIndex + 1) % NUM_PALETTES;
+
+                // Initialize matrix streams if switching to a matrix effect
+                if (paletteIndex >= 3 && paletteIndex <= 5) {
+                    initializeStreams();
+                }
+
                 Serial.print("Changed to effect: ");
                 Serial.println(paletteIndex);
             }
@@ -534,7 +566,7 @@ void loop() {
     FastLED.setBrightness(BRIGHTNESS);
 
     // Handle display clearing based on effect type
-    if (paletteIndex == 3) { // Matrix effect has its own fade-to-black
+    if (paletteIndex >= 3 && paletteIndex <= 5) { // Matrix effects have their own fade-to-black
         // Don't clear for Matrix effect
     } else {
         // Clear for fire and sun effects
@@ -550,10 +582,12 @@ void loop() {
             drawFireEffect();
             break;
         case 3:
-            // Matrix Digital Rain effect
+        case 4:
+        case 5:
+            // Matrix Digital Rain effect with different colors (green, blue, red)
             drawMatrixRain();
             break;
-        case 4:
+        case 6:
             // Sun animation effect
             drawSun();
             break;
