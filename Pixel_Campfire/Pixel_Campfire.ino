@@ -5,8 +5,8 @@
 #include <FastLED.h>
 
 // Hardware configuration
-#define LED_PIN     6      // Digital pin connected to the LED matrix
-#define BUTTON_PIN  9      // Digital pin for color change button
+#define LED_PIN     3      // Digital pin connected to the LED matrix
+#define BUTTON_PIN  2      // Digital pin for color change button
 #define HEIGHT      16     // Matrix height
 #define WIDTH       16     // Matrix width
 #define NUM_LEDS    (HEIGHT * WIDTH)
