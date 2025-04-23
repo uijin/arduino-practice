@@ -7,11 +7,12 @@
 // Hardware configuration
 #define LED_PIN     3      // Digital pin connected to the LED matrix
 #define BUTTON_PIN  2      // Digital pin for color change button
+#define BRIGHTNESS_POT_PIN 21  // Analog pin for brightness potentiometer
 #define HEIGHT      16     // Matrix height
 #define WIDTH       16     // Matrix width
 #define NUM_LEDS    (HEIGHT * WIDTH)
 #define SERPENTINE  true   // Set to true if your matrix alternates direction every row
-#define BRIGHTNESS  150    // Overall brightness (0-255)
+#define BRIGHTNESS  50    // Overall brightness (0-255)
 
 // Animation parameters
 #define SCALE_XY     20    // Scale for noise (1-100)
@@ -46,6 +47,11 @@
 #define RAY_HUE 32           // Base hue for rays (32 = yellow-orange)
 #define CORE_HUE 30          // Base hue for core (30 = more yellow)
 
+// Add to the start of the file with other #define statements
+#define BRIGHTNESS_POT_PIN 21     // Analog pin A3 on Pro Micro
+#define MIN_BRIGHTNESS 0         // Minimum brightness level (0-255)
+#define MAX_BRIGHTNESS 200        // Maximum brightness level (0-255)
+
 // LED array
 CRGB leds[NUM_LEDS];
 
@@ -57,6 +63,11 @@ uint8_t paletteIndex = 2;  // Start with blue (0=fire, 1=green, 2=blue, 3,4,5=ma
 uint8_t lastButtonState = HIGH;    // Last state of the button (assuming pull-up resistor)
 uint8_t buttonState = HIGH;        // Current state of the button
 uint32_t lastDebounceTime = 0;     // Last time the button state changed
+
+// Potentiometer variables
+int potRawValue = 0;              // Raw potentiometer reading (0-1023)
+uint8_t currentBrightness = BRIGHTNESS; // Current brightness level (initialized to default)
+uint32_t lastPotReadTime = 0;     // Last time pot was read
 
 // Define original fire palette (keeping the full intensity for visual quality)
 DEFINE_GRADIENT_PALETTE(firepal){
@@ -179,6 +190,21 @@ uint16_t getOptimizedNoise(uint32_t x, uint32_t y, uint32_t z) {
     cacheIndex = (cacheIndex + 1) % NOISE_CACHE_SIZE;
 
     return noiseValue;
+}
+
+// Read the brightness potentiometer value
+void readBrightnessPot() {
+  // Only read the pot every 100ms to avoid unnecessary ADC usage
+  if (millis() - lastPotReadTime > 100) {
+    // Read the analog value (0-1023)
+    potRawValue = analogRead(BRIGHTNESS_POT_PIN);
+
+    // Print the value to serial monitor for debugging
+    Serial.print("Pot Value: ");
+    Serial.println(potRawValue);
+
+    lastPotReadTime = millis();
+  }
 }
 
 // Initialize all rain streams with proper colors based on current palette
@@ -443,13 +469,21 @@ void setup() {
     // Initialize FastLED with power limiting
     FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);
     FastLED.setCorrection(Typical8mmPixel);
-    FastLED.setBrightness(BRIGHTNESS);
+    FastLED.setBrightness(currentBrightness);
 
     // Power limiting for stability
     FastLED.setMaxPowerInVoltsAndMilliamps(5, 800);
 
     // Initialize button pin with internal pull-up resistor
     pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+    // Initialize analog pin for potentiometer
+    pinMode(BRIGHTNESS_POT_PIN, INPUT);
+
+    // Read initial brightness from potentiometer
+    potRawValue = analogRead(BRIGHTNESS_POT_PIN);
+    currentBrightness = map(potRawValue, 0, 1023, MIN_BRIGHTNESS, MAX_BRIGHTNESS);
+    FastLED.setBrightness(currentBrightness);
 
     // Initialize noise cache
     for (uint8_t i = 0; i < NOISE_CACHE_SIZE; i++) {
@@ -469,6 +503,32 @@ void setup() {
     randomSeed(analogRead(0));
 
     Serial.println("Setup complete");
+}
+
+
+// Add this function after setup() but before loop()
+void updateBrightness() {
+  // Only read the pot every 100ms to avoid unnecessary ADC usage and flickering
+  if (millis() - lastPotReadTime > 100) {
+    // Read the analog value (0-1023)
+    potRawValue = analogRead(BRIGHTNESS_POT_PIN);
+
+    // Map the pot value (0-1023) to the brightness range (MIN_BRIGHTNESS to MAX_BRIGHTNESS)
+    uint8_t newBrightness = constrain(potRawValue, MIN_BRIGHTNESS, MAX_BRIGHTNESS);
+
+    // Only update if brightness has changed significantly (to reduce flickering)
+    if (abs(newBrightness - currentBrightness) >= 10) {
+      currentBrightness = newBrightness;
+
+      // Print the brightness value for debugging
+      Serial.print("Pot Raw: ");
+      Serial.print(potRawValue);
+      Serial.print(" | Brightness: ");
+      Serial.println(currentBrightness);
+    }
+
+    lastPotReadTime = millis();
+  }
 }
 
 void checkButtonAndChangePalette() {
@@ -559,11 +619,14 @@ void loop() {
     // Reset random seed to avoid pattern issues
     randomSeed(millis());
 
+    // Update brightness based on potentiometer
+    updateBrightness();
+
     // Check if the button was pressed to change the color palette
     checkButtonAndChangePalette();
 
-    // Set the brightness for this frame
-    FastLED.setBrightness(BRIGHTNESS);
+    // Set the brightness for this frame using the potentiometer value
+    FastLED.setBrightness(currentBrightness);
 
     // Handle display clearing based on effect type
     if (paletteIndex >= 3 && paletteIndex <= 5) { // Matrix effects have their own fade-to-black
