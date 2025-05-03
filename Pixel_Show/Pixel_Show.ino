@@ -57,6 +57,8 @@ bool parseRgbStringToColorArray(const String &pixelData, uint8_t colors[][3]); /
 void nextImage();
 inline void applyNoRotation(uint8_t &x, uint8_t &y) {} // Renamed from rotate0
 void rotateUpsideDown(uint8_t &x, uint8_t &y); // Renamed from rotate180degree
+void rotate90Clockwise(uint8_t &x, uint8_t &y);
+void rotate270Clockwise(uint8_t &x, uint8_t &y);
 
 // Function pointer type for index calculation
 typedef uint8_t (*IndexFunction)(uint8_t, uint8_t);
@@ -64,7 +66,7 @@ typedef void (*RotateFunction)(uint8_t &, uint8_t &);
 
 // Function pointer variable
 IndexFunction getLedPanelIndex = getVerticalZigzagIndex;  // Default to getVerticalZigzagIndex
-RotateFunction rotateCoordinates = rotateUpsideDown;
+RotateFunction rotateCoordinates = rotate270Clockwise;
 
 uint8_t mapToPhysicalLedIndex(uint8_t x, uint8_t y) {  // Renamed from getLedIndex
   // Apply rotation to coordinates before mapping to physical LEDs
@@ -818,4 +820,42 @@ inline void rotateUpsideDown(uint8_t &x, uint8_t &y) {  // Renamed from rotate18
   // Flip the coordinates (rotate 180 degrees)
   x = N_X - 1 - x;
   y = N_Y - 1 - y;
+}
+
+/**
+ * Rotates coordinates 90 degrees clockwise for display
+ * This function transforms x,y coordinates for a 90-degree clockwise rotation.
+ * The origin (0,0) moves to the top-right corner (N_X-1, 0).
+ *
+ * For example, with a 16x16 panel:
+ * - (0,0) becomes (15, 0)
+ * - (1,0) becomes (15, 1)
+ * - (0,1) becomes (14, 0)
+ *
+ * @param x X-coordinate (passed by reference, will be modified)
+ * @param y Y-coordinate (passed by reference, will be modified)
+ */
+inline void rotate90Clockwise(uint8_t &x, uint8_t &y) {
+  uint8_t temp_x = x;
+  x = N_Y - 1 - y; // New x depends on old y and matrix height (N_Y)
+  y = temp_x;      // New y is the old x
+}
+
+/**
+ * Rotates coordinates 270 degrees clockwise (or 90 degrees counter-clockwise)
+ * This function transforms x,y coordinates for a 270-degree clockwise rotation.
+ * The origin (0,0) moves to the bottom-left corner (0, N_Y-1).
+ *
+ * For example, with a 16x16 panel:
+ * - (0,0) becomes (0, 15)
+ * - (1,0) becomes (0, 14)
+ * - (0,1) becomes (1, 15)
+ *
+ * @param x X-coordinate (passed by reference, will be modified)
+ * @param y Y-coordinate (passed by reference, will be modified)
+ */
+inline void rotate270Clockwise(uint8_t &x, uint8_t &y) {
+  uint8_t temp_x = x;
+  x = y;             // New x is the old y
+  y = N_X - 1 - temp_x; // New y depends on old x and matrix width (N_X)
 }
