@@ -5,14 +5,14 @@
 #include <FastLED.h>
 
 // Hardware configuration
-#define LED_PIN     3      // Digital pin connected to the LED matrix
-#define BUTTON_PIN  2      // Digital pin for color change button
+#define LED_PIN     15      // Digital pin connected to the LED matrix
+#define BUTTON_PIN  10      // Digital pin for color change button
 #define BRIGHTNESS_POT_PIN 21  // Analog pin for brightness potentiometer
 #define HEIGHT      16     // Matrix height
 #define WIDTH       16     // Matrix width
 #define NUM_LEDS    (HEIGHT * WIDTH)
 #define SERPENTINE  true   // Set to true if your matrix alternates direction every row
-#define BRIGHTNESS  50    // Overall brightness (0-255)
+#define BRIGHTNESS  20    // Overall brightness (0-255)
 
 // Animation parameters
 #define SCALE_XY     20    // Scale for noise (1-100)
