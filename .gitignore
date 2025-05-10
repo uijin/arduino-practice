@@ -2,6 +2,9 @@
 *.png
 *.jpg
 *.numbers
+*.pxl
+*.xlsx
+Emoji_8x8_show/*.h
 libraries/
 .DS_Store
 fp-info-cache
