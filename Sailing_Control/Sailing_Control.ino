@@ -29,7 +29,7 @@ U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 // 定義類比搖桿的引腳
 #define JOYSTICK_X_PIN A0     // 類比搖桿X軸
 #define JOYSTICK_Y_PIN A1     // 類比搖桿Y軸
-#define JOYSTICK_BUTTON_PIN 2 // 搖桿按鈕連接到D2
+#define JOYSTICK_BUTTON_PIN D2 // 搖桿按鈕連接到D2
 
 // **重要** 在發送端模式，設置接收端的MAC地址（從接收端的Serial輸出獲取）
 // 示例格式: {0x24, 0x0A, 0xC4, 0x9A, 0x58, 0x28}
