@@ -6,8 +6,8 @@
 
 // ===== 重要：在這裡選擇設備角色 =====
 // 取消註釋其中一個，並註釋另一個
-// #define DEVICE_ROLE_SENDER     // 取消此行註釋使設備成為發送端
-#define DEVICE_ROLE_RECEIVER // 取消此行註釋使設備成為接收端
+#define DEVICE_ROLE_SENDER     // 取消此行註釋使設備成為發送端
+// #define DEVICE_ROLE_RECEIVER // 取消此行註釋使設備成為接收端
 
 // 檢查是否正確定義了角色
 #if defined(DEVICE_ROLE_SENDER) && defined(DEVICE_ROLE_RECEIVER)
@@ -93,10 +93,6 @@ unsigned long lastAckSentTime = 0; // 上次發送ACK的時間
 int lastRSSI = 0;                      // 上次接收的RSSI值
 int minRSSI = 0;                       // 最小RSSI值 (最弱訊號)
 int maxRSSI = -100;                    // 最大RSSI值 (最強訊號)
-int noiseFloor = -95;                  // 估計的雜訊底板，初始值設為-95dBm
-int lastSNR = 0;                       // 上次計算的SNR值
-int minSNR = 0;                        // 最小SNR值
-int maxSNR = 0;                        // 最大SNR值
 
 // 封包統計相關變數
 uint32_t totalPackets = 0;             // 接收到的總封包數
@@ -112,13 +108,7 @@ const unsigned long pageSwitchInterval = 5000; // 自動切換顯示頁面的間
 bool buttonPressedLast = false;        // 上次按鈕狀態
 #endif
 
-// 獲取雜訊底板值的函數
-int getNoiseFloor() {
-  // ESP32 IDF API中沒有直接獲取雜訊底板的函數
-  // 這裡使用一個較低的固定值作為估計值，或者可以嘗試在低訊號強度時測量RSSI
-  return -95; // 估計的雜訊底板值，單位dBm
-}
-
+// 獲取當前WiFi信道的利用率 (估算)
 // 獲取信道利用率的函數
 int getChannelUtilization() {
   // ESP32沒有直接API獲取信道利用率，所以這裡是一個模擬實現
@@ -379,27 +369,12 @@ void updateOLEDPage0() {
   sprintf(buffer, "RSSI: %d dBm (%d%%)", lastRSSI, signalStrength);
   u8g2.drawStr(0, 24, buffer);
 
-  // 繪製訊號強度圖標
-  drawSignalStrength(100, 24, signalStrength);
-
-  // 顯示SNR信息
-  sprintf(buffer, "SNR: %d dB", lastSNR);
-  u8g2.drawStr(0, 36, buffer);
-
-  // 繪製SNR進度條 (假設SNR範圍0-40dB)
-  int snrPercentage = constrain(map(lastSNR, 0, 40, 0, 100), 0, 100);
-  drawProgressBar(65, 30, 56, 6, snrPercentage);
-
-  // 顯示雜訊底板
-  sprintf(buffer, "Noise: %d dBm", noiseFloor);
-  u8g2.drawStr(0, 48, buffer);
-
   // 顯示信道利用率
   sprintf(buffer, "Channel: %d (%d%%)", ESP_NOW_CHANNEL, channelUtilization);
-  u8g2.drawStr(0, 60, buffer);
+  u8g2.drawStr(0, 36, buffer); // Y座標調整為36
 
   // 繪製信道利用率進度條
-  drawProgressBar(78, 54, 48, 6, channelUtilization);
+  drawProgressBar(96, 30, 32, 6, channelUtilization); // Y座標調整為30
 }
 
 // 更新OLED顯示 - 第二頁：封包統計和搖桿數據
@@ -502,7 +477,7 @@ void updateSenderOLED() {
     u8g2.drawStr(0, 48, buffer);
 
     // 繪製訊號強度圖標
-    drawSignalStrength(100, 48, signalStrength);
+    // drawSignalStrength(100, 48, signalStrength);
 
     sprintf(buffer, "ACK ID: %lu", receivedAck.ack_id);
     u8g2.drawStr(0, 60, buffer);
@@ -561,23 +536,6 @@ void OnDataRecv(const esp_now_recv_info_t *recv_info, const uint8_t *incomingDat
   // 更新最大最小RSSI值
   if (lastRSSI > maxRSSI) maxRSSI = lastRSSI;
   if (lastRSSI < minRSSI) minRSSI = lastRSSI;
-
-  // 獲取或更新雜訊底板
-  noiseFloor = getNoiseFloor();
-
-  // 計算SNR
-  lastSNR = lastRSSI - noiseFloor;
-
-  // 更新最大最小SNR值
-  if (lastSNR > maxSNR) maxSNR = lastSNR;
-  if (lastSNR < minSNR) minSNR = lastSNR;
-
-  // 輸出訊號相關信息
-  Serial.print("Noise Floor: ");
-  Serial.print(noiseFloor);
-  Serial.print(" dBm, SNR: ");
-  Serial.print(lastSNR);
-  Serial.println(" dB");
 
   // 處理接收到的搖桿數據
   if (len == sizeof(joystickData)) {
@@ -937,8 +895,6 @@ void setup() {
   // 初始化無線訊號相關變數
   minRSSI = 0;
   maxRSSI = -100;
-  minSNR = 0;
-  maxSNR = 0;
   // 發送端未初始註冊
   senderRegistered = false;
   #endif
