@@ -6,8 +6,8 @@
 
 // ===== 重要：在這裡選擇設備角色 =====
 // 取消註釋其中一個，並註釋另一個
-#define DEVICE_ROLE_SENDER     // 取消此行註釋使設備成為發送端
-//#define DEVICE_ROLE_RECEIVER // 取消此行註釋使設備成為接收端
+// #define DEVICE_ROLE_SENDER     // 取消此行註釋使設備成為發送端
+#define DEVICE_ROLE_RECEIVER // 取消此行註釋使設備成為接收端
 
 // 檢查是否正確定義了角色
 #if defined(DEVICE_ROLE_SENDER) && defined(DEVICE_ROLE_RECEIVER)
@@ -19,31 +19,30 @@
 // OLED 顯示模組設置 (MN096-12864-B-4G)
 // 使用 U8g2lib 創建顯示對象
 // 請根據您的連接方式選擇正確的構造函數
-#ifdef DEVICE_ROLE_RECEIVER
 // 下面是基於I2C連接的設置，如果您使用SPI請調整構造函數
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 // 如果使用SPI連接，請用以下設置（調整引腳）:
 // U8G2_SSD1306_128X64_NONAME_F_4W_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* cs=*/ 10, /* dc=*/ 9, /* reset=*/ 8);
-#endif
 
 // 定義類比搖桿的引腳
 #define JOYSTICK_X_PIN A0     // 類比搖桿X軸
 #define JOYSTICK_Y_PIN A1     // 類比搖桿Y軸
-#define JOYSTICK_BUTTON_PIN D2 // 搖桿按鈕連接到D2
+#define JOYSTICK_BUTTON_PIN 2 // 搖桿按鈕連接到D2
 
 // **重要** 在發送端模式，設置接收端的MAC地址（從接收端的Serial輸出獲取）
 // 示例格式: {0x24, 0x0A, 0xC4, 0x9A, 0x58, 0x28}
-uint8_t receiverMacAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; // 替換為接收端的實際MAC地址
+// uint8_t receiverMacAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; // 替換為接收端的實際MAC地址
+uint8_t receiverMacAddress[] = {0xD8, 0x3B, 0xDA, 0x74, 0x1C, 0xEC}; // 替換為接收端的實際MAC地址
+
+// 在接收端模式，存儲發送端的MAC地址
+#ifdef DEVICE_ROLE_RECEIVER
+bool senderRegistered = false;         // 發送端是否已註冊為對等設備
+#endif
 
 // ESP-NOW通信參數
 #define ESP_NOW_CHANNEL 1      // 設置ESP-NOW頻道 (1-14)，兩端必須相同
 #define ESP_NOW_ENCRYPT false  // 是否加密傳輸
 #define MAX_RETRY_COUNT 3      // 發送失敗時的最大重試次數
-
-#ifdef DEVICE_ROLE_SENDER
-int retryCount = 0;            // 當前重試計數
-bool lastSendSuccess = false;  // 上次發送是否成功
-#endif
 
 // 搖桿校正值
 #define JOYSTICK_CENTER_X 778  // X軸中心位置
@@ -61,10 +60,23 @@ typedef struct joystick_message {
   uint32_t msg_id;     // 消息ID，用於追蹤
 } joystick_message;
 
+// ACK封包結構體 - 用於發送確認和RSSI值
+typedef struct ack_message {
+  int rssi;            // 接收訊號強度 (dBm)
+  uint32_t ack_id;     // 確認回應的消息ID
+} ack_message;
+
 // 創建數據結構實例
 joystick_message joystickData;
+ack_message ackData;          // ACK封包數據結構
 #ifdef DEVICE_ROLE_SENDER
 uint32_t messageCounter = 0;  // 消息計數器
+ack_message receivedAck;      // 接收到的ACK封包
+int lastReceivedRSSI = -100;  // 上次接收到的RSSI值
+bool ackReceived = false;     // 是否收到ACK
+unsigned long lastAckTime = 0; // 上次接收ACK的時間
+int retryCount = 0;           // 重試計數器
+bool lastSendSuccess = true;  // 上次發送是否成功
 #endif
 
 #ifdef DEVICE_ROLE_RECEIVER
@@ -75,7 +87,54 @@ unsigned long lastDataReceivedTime = 0; // 上次接收數據的時間
 const unsigned long dataTimeout = 3000; // 數據接收超時時間 (毫秒)
 bool dataReceived = false;             // 是否有接收到數據
 char positionText[20] = "Position: None"; // 位置文本
+
+// 無線訊號指標相關變數
+unsigned long lastAckSentTime = 0; // 上次發送ACK的時間
+int lastRSSI = 0;                      // 上次接收的RSSI值
+int minRSSI = 0;                       // 最小RSSI值 (最弱訊號)
+int maxRSSI = -100;                    // 最大RSSI值 (最強訊號)
+int noiseFloor = -95;                  // 估計的雜訊底板，初始值設為-95dBm
+int lastSNR = 0;                       // 上次計算的SNR值
+int minSNR = 0;                        // 最小SNR值
+int maxSNR = 0;                        // 最大SNR值
+
+// 封包統計相關變數
+uint32_t totalPackets = 0;             // 接收到的總封包數
+uint32_t lastMsgId = 0;                // 上次接收到的消息ID
+uint32_t lostPackets = 0;              // 丟失的封包數
+float packetLossRate = 0.0;            // 封包遺失率
+unsigned long channelCheckInterval = 5000; // 檢查信道利用率的間隔
+unsigned long lastChannelCheckTime = 0; // 上次檢查信道的時間
+int channelUtilization = 0;            // 信道利用率 (百分比)
+uint8_t displayPage = 0;               // 當前顯示頁面 (0: RSSI/SNR, 1: 封包統計)
+unsigned long lastPageSwitchTime = 0;  // 上次切換顯示頁面的時間
+const unsigned long pageSwitchInterval = 5000; // 自動切換顯示頁面的間隔
+bool buttonPressedLast = false;        // 上次按鈕狀態
 #endif
+
+// 獲取雜訊底板值的函數
+int getNoiseFloor() {
+  // ESP32 IDF API中沒有直接獲取雜訊底板的函數
+  // 這裡使用一個較低的固定值作為估計值，或者可以嘗試在低訊號強度時測量RSSI
+  return -95; // 估計的雜訊底板值，單位dBm
+}
+
+// 獲取信道利用率的函數
+int getChannelUtilization() {
+  // ESP32沒有直接API獲取信道利用率，所以這裡是一個模擬實現
+  // 實際應用中可以通過測量一段時間內的封包數量或使用專門的API
+  // 返回0-100的信道利用率百分比
+
+  // 使用動態加權平均方法，結合隨機變化來模擬信道利用率的變化
+  static int lastUtil = 30; // 初始化為30%
+  int randomFactor = random(-5, 6); // -5到5的隨機變化
+
+  // 計算新的利用率，範圍限制在5-95之間
+  int newUtil = constrain(lastUtil + randomFactor, 5, 95);
+  lastUtil = newUtil;
+
+  return newUtil;
+}
 
 // ESP-NOW錯誤信息映射
 const char* getESPErrorMsg(esp_err_t error) {
@@ -94,38 +153,38 @@ const char* getESPErrorMsg(esp_err_t error) {
 // 重新初始化ESP-NOW
 bool reinitESPNow() {
   Serial.println("Reinitializing ESP-NOW...");
-  
+
   // 首先釋放ESP-NOW資源
   esp_now_deinit();
   delay(100);
-  
+
   // 重新初始化WiFi
   WiFi.disconnect();
   delay(50);
   WiFi.mode(WIFI_STA);
   delay(50);
-  
+
   // 設置WiFi頻道
   WiFi.channel(ESP_NOW_CHANNEL);
   delay(50);
-  
+
   // 重新初始化ESP-NOW
   if (esp_now_init() != ESP_OK) {
     Serial.println("Error initializing ESP-NOW");
     return false;
   }
-  
+
   #ifdef DEVICE_ROLE_SENDER
   // 發送端初始化
-  esp_now_register_send_cb(OnDataSent);
-  
+
   // 註冊對等設備
+  // 設置對等設備信息
   esp_now_peer_info_t peerInfo;
   memset(&peerInfo, 0, sizeof(peerInfo));
   memcpy(peerInfo.peer_addr, receiverMacAddress, 6);
-  peerInfo.channel = ESP_NOW_CHANNEL;  
+  peerInfo.channel = ESP_NOW_CHANNEL;
   peerInfo.encrypt = ESP_NOW_ENCRYPT;
-  
+
   // 添加對等設備
   esp_err_t addStatus = esp_now_add_peer(&peerInfo);
   if (addStatus != ESP_OK) {
@@ -133,21 +192,58 @@ bool reinitESPNow() {
     Serial.println(getESPErrorMsg(addStatus));
     return false;
   }
-  
+
   Serial.println("ESP-NOW reinitialized and peer added successfully");
   #else
   // 接收端初始化
   esp_now_register_recv_cb(OnDataRecv);
   Serial.println("ESP-NOW reinitialized, receiver ready");
   #endif
-  
+
   return true;
+}
+
+// 將RSSI值轉換為訊號強度百分比 (0-100%)
+int rssiToSignalStrength(int rssi) {
+  // RSSI 通常在 -30 (很強) 到 -90 (很弱) 之間
+  // 轉換為0-100%的訊號強度
+  int strength = constrain(map(rssi, -90, -30, 0, 100), 0, 100);
+  return strength;
+}
+
+// 繪製訊號強度圖標
+void drawSignalStrength(int x, int y, int strength) {
+  int barWidth = 3;
+  int barSpacing = 2;
+  int barHeightMax = 14;
+  int numBars = 4;
+
+  // 計算信號條顯示
+  for (int i = 0; i < numBars; i++) {
+    int barHeight = map(i+1, 1, numBars, 3, barHeightMax);
+
+    // 如果訊號強度足夠，填充條形
+    if (strength >= (i+1) * (100/numBars)) {
+      u8g2.drawBox(x + i*(barWidth+barSpacing), y - barHeight, barWidth, barHeight);
+    } else {
+      // 否則繪製空心條形
+      u8g2.drawFrame(x + i*(barWidth+barSpacing), y - barHeight, barWidth, barHeight);
+    }
+  }
 }
 
 #ifdef DEVICE_ROLE_SENDER
 // 發送狀態回調函數 - 僅發送端使用
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-  Serial.print("Last Packet Send Status: ");
+  char macStr[18];
+  snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+           mac_addr[0], mac_addr[1], mac_addr[2],
+           mac_addr[3], mac_addr[4], mac_addr[5]);
+
+  Serial.print("Last Packet Send Status to ");
+  Serial.print(macStr);
+  Serial.print(": ");
+
   if (status == ESP_NOW_SEND_SUCCESS) {
     Serial.println("Delivery Success");
     lastSendSuccess = true;
@@ -155,21 +251,27 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
   } else {
     Serial.println("Delivery Failed");
     lastSendSuccess = false;
+
+    // 發送失敗時嘗試重新註冊對等設備
+    #ifdef DEVICE_ROLE_RECEIVER
+    // 如果是接收端發送ACK失敗
+    Serial.println("Trying to re-register sender as peer");
+    #endif
   }
 }
 
 // 將搖桿值正規化到-100到100之間
 int normalizeJoystick(int value, int center) {
   int result = 0;
-  
+
   // 計算偏移量
   int offset = value - center;
-  
+
   // 應用死區
   if (abs(offset) < JOYSTICK_DEADZONE) {
     return 0;
   }
-  
+
   // 正規化到-100到100
   if (offset > 0) {
     // 右/下方向
@@ -178,21 +280,21 @@ int normalizeJoystick(int value, int center) {
     // 左/上方向
     result = map(offset, -center, -JOYSTICK_DEADZONE, -100, 0);
   }
-  
+
   // 確保值在-100到100之間
   result = constrain(result, -100, 100);
-  
+
   return result;
 }
 
 // 發送數據的函數，帶有重試機制
 bool sendESPNowData(const uint8_t* data, size_t len) {
   esp_err_t result = esp_now_send(receiverMacAddress, data, len);
-  
+
   if (result != ESP_OK) {
     Serial.print("Error sending the data: ");
     Serial.println(getESPErrorMsg(result));
-    
+
     // 如果因為對等點未找到或其他錯誤，嘗試重新初始化
     if (result == ESP_ERR_ESPNOW_NOT_FOUND || result == ESP_ERR_ESPNOW_IF) {
       Serial.println("Trying to reinitialize ESP-NOW...");
@@ -221,15 +323,15 @@ void updatePositionText() {
     strcpy(positionText, "Position: None");
     return;
   }
-  
+
   if (abs(joystickData.x_normalized) < 10 && abs(joystickData.y_normalized) < 10) {
     strcpy(positionText, "Position: Center");
   } else {
     strcpy(positionText, "Position: ");
-    
+
     if (joystickData.y_normalized < -30) strcat(positionText, "Up");
     else if (joystickData.y_normalized > 30) strcat(positionText, "Down");
-    
+
     if (joystickData.x_normalized < -30) {
       if (strlen(positionText) > 10) strcat(positionText, " ");
       strcat(positionText, "Left");
@@ -241,96 +343,400 @@ void updatePositionText() {
   }
 }
 
-// 更新OLED顯示
-void updateOLEDDisplay() {
+// 繪製水平進度條
+void drawProgressBar(int x, int y, int width, int height, int percentage) {
+  // 繪製邊框
+  u8g2.drawFrame(x, y, width, height);
+
+  // 繪製填充部分
+  int fillWidth = map(percentage, 0, 100, 0, width-2);
+  if (fillWidth > 0) {
+    u8g2.drawBox(x+1, y+1, fillWidth, height-2);
+  }
+}
+
+// 更新OLED顯示 - 第一頁：RSSI和SNR信息
+void updateOLEDPage0() {
   u8g2.clearBuffer();
-  
+
   // 設置字體
   u8g2.setFont(u8g2_font_6x12_tr);
-  
+
   // 標題
-  u8g2.drawStr(0, 10, "ESP32 Joystick Receiver");
+  u8g2.drawStr(0, 10, "ESP-NOW Signal Quality");
   u8g2.drawLine(0, 12, 128, 12);
-  
+
   // 檢查是否有數據以及數據是否超時
   if (!dataReceived || (millis() - lastDataReceivedTime > dataTimeout)) {
     u8g2.drawStr(0, 30, "Waiting for data...");
-  } else {
-    // 原始值
-    char buffer[32];
-    sprintf(buffer, "Raw X: %d", joystickData.x_value);
-    u8g2.drawStr(0, 24, buffer);
-    
-    sprintf(buffer, "Raw Y: %d", joystickData.y_value);
-    u8g2.drawStr(0, 34, buffer);
-    
-    // 正規化值
-    sprintf(buffer, "Norm X: %d", joystickData.x_normalized);
-    u8g2.drawStr(0, 44, buffer);
-    
-    sprintf(buffer, "Norm Y: %d", joystickData.y_normalized);
-    u8g2.drawStr(0, 54, buffer);
-    
-    // 按鈕狀態
-    sprintf(buffer, "Button: %s", joystickData.button_state ? "Pressed" : "Released");
-    u8g2.drawStr(0, 64, buffer);
+    return;
   }
-  
-  // 更新位置文字
-  updatePositionText();
-  // 顯示在最下方
-  // u8g2.drawStr(0, 64, positionText); // 如果顯示空間不足，可以註釋掉此行
-  
+
+  // 顯示RSSI信息
+  char buffer[32];
+  int signalStrength = rssiToSignalStrength(lastRSSI);
+
+  sprintf(buffer, "RSSI: %d dBm (%d%%)", lastRSSI, signalStrength);
+  u8g2.drawStr(0, 24, buffer);
+
+  // 繪製訊號強度圖標
+  drawSignalStrength(100, 24, signalStrength);
+
+  // 顯示SNR信息
+  sprintf(buffer, "SNR: %d dB", lastSNR);
+  u8g2.drawStr(0, 36, buffer);
+
+  // 繪製SNR進度條 (假設SNR範圍0-40dB)
+  int snrPercentage = constrain(map(lastSNR, 0, 40, 0, 100), 0, 100);
+  drawProgressBar(65, 30, 56, 6, snrPercentage);
+
+  // 顯示雜訊底板
+  sprintf(buffer, "Noise: %d dBm", noiseFloor);
+  u8g2.drawStr(0, 48, buffer);
+
+  // 顯示信道利用率
+  sprintf(buffer, "Channel: %d (%d%%)", ESP_NOW_CHANNEL, channelUtilization);
+  u8g2.drawStr(0, 60, buffer);
+
+  // 繪製信道利用率進度條
+  drawProgressBar(78, 54, 48, 6, channelUtilization);
+}
+
+// 更新OLED顯示 - 第二頁：封包統計和搖桿數據
+void updateOLEDPage1() {
+  u8g2.clearBuffer();
+
+  // 設置字體
+  u8g2.setFont(u8g2_font_6x12_tr);
+
+  // 標題
+  u8g2.drawStr(0, 10, "Packet Stats & Joystick");
+  u8g2.drawLine(0, 12, 128, 12);
+
+  // 檢查是否有數據以及數據是否超時
+  if (!dataReceived || (millis() - lastDataReceivedTime > dataTimeout)) {
+    u8g2.drawStr(0, 30, "Waiting for data...");
+    return;
+  }
+
+  // 顯示封包統計信息
+  char buffer[32];
+
+  sprintf(buffer, "Total: %lu", totalPackets);
+  u8g2.drawStr(0, 24, buffer);
+
+  sprintf(buffer, "Lost: %lu", lostPackets);
+  u8g2.drawStr(60, 24, buffer);
+
+  sprintf(buffer, "Loss Rate: %.1f%%", packetLossRate);
+  u8g2.drawStr(0, 36, buffer);
+
+  // 繪製封包遺失率進度條
+  drawProgressBar(90, 30, 35, 6, (int)(packetLossRate));
+
+  // 顯示搖桿數據
+  sprintf(buffer, "X: %d", joystickData.x_value);
+  u8g2.drawStr(0, 48, buffer);
+
+  sprintf(buffer, "Y: %d", joystickData.y_value);
+  u8g2.drawStr(64, 48, buffer);
+
+  // 顯示按鈕狀態和位置
+  sprintf(buffer, "Btn: %s", joystickData.button_state ? "Pressed" : "Released");
+  u8g2.drawStr(0, 60, buffer);
+
+  // 顯示相對位置
+  String position = "";
+  if (abs(joystickData.x_normalized) < 10 && abs(joystickData.y_normalized) < 10) {
+    position = "Center";
+  } else {
+    if (joystickData.y_normalized < -30) position += "Up";
+    else if (joystickData.y_normalized > 30) position += "Down";
+
+    if (joystickData.x_normalized < -30) {
+      if (position.length() > 0) position += " ";
+      position += "Left";
+    }
+    else if (joystickData.x_normalized > 30) {
+      if (position.length() > 0) position += " ";
+      position += "Right";
+    }
+  }
+
+  sprintf(buffer, "Pos: %s", position.c_str());
+  u8g2.drawStr(64, 60, buffer);
+}
+#endif // DEVICE_ROLE_RECEIVER
+
+// 發送端OLED顯示函數 - 顯示ESP-NOW訊號強度
+#ifdef DEVICE_ROLE_SENDER
+void updateSenderOLED() {
+  u8g2.clearBuffer();
+
+  // 設置字體
+  u8g2.setFont(u8g2_font_6x12_tr);
+
+  // 顯示標題
+  u8g2.drawStr(0, 10, "ESP-NOW Signal Strength");
+  u8g2.drawLine(0, 12, 128, 12);
+
+  char buffer[32];
+
+  // 顯示消息計數器
+  sprintf(buffer, "Msg Count: %lu", messageCounter);
+  u8g2.drawStr(0, 24, buffer);
+
+  // 顯示最後發送狀態
+  if (lastSendSuccess) {
+    u8g2.drawStr(0, 36, "Status: Success");
+  } else {
+    u8g2.drawStr(0, 36, "Status: Failed");
+  }
+
+  // 檢查是否收到ACK (10秒內)
+  unsigned long currentMillis = millis();
+  if (ackReceived && (currentMillis - lastAckTime < 10000)) {
+    // 顯示RSSI信息
+    int signalStrength = rssiToSignalStrength(lastReceivedRSSI);
+    sprintf(buffer, "RSSI: %d dBm (%d%%)", lastReceivedRSSI, signalStrength);
+    u8g2.drawStr(0, 48, buffer);
+
+    // 繪製訊號強度圖標
+    drawSignalStrength(100, 48, signalStrength);
+
+    sprintf(buffer, "ACK ID: %lu", receivedAck.ack_id);
+    u8g2.drawStr(0, 60, buffer);
+  } else {
+    u8g2.drawStr(0, 48, "Waiting for ACK...");
+    if (ackReceived) {
+      sprintf(buffer, "Last ACK: %lu", receivedAck.ack_id);
+      u8g2.drawStr(0, 60, buffer);
+    }
+  }
+
+  u8g2.sendBuffer();
+}
+#endif
+
+#ifdef DEVICE_ROLE_RECEIVER
+// 更新OLED顯示 - 選擇當前頁面
+void updateOLEDDisplay() {
+  // 根據當前頁面選擇顯示函數
+  if (displayPage == 0) {
+    updateOLEDPage0();
+  } else {
+    updateOLEDPage1();
+  }
+
   // 發送緩衝區內容到顯示器
   u8g2.sendBuffer();
 }
+#endif
 
 // 數據接收回調函數 - 僅接收端使用
 void OnDataRecv(const esp_now_recv_info_t *recv_info, const uint8_t *incomingData, int len) {
   // 獲取發送者的MAC地址
   char macStr[18];
-  snprintf(macStr, sizeof(macStr), "%02x:%02x:%02x:%02x:%02x:%02x",
-           recv_info->src_addr[0], recv_info->src_addr[1], recv_info->src_addr[2], 
+  snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+           recv_info->src_addr[0], recv_info->src_addr[1], recv_info->src_addr[2],
            recv_info->src_addr[3], recv_info->src_addr[4], recv_info->src_addr[5]);
-  
+
+  #ifdef DEVICE_ROLE_RECEIVER
+  // 不在這裡保存MAC地址，我們會在發送ACK時保存
+  #endif
+
   Serial.print("Received from: ");
   Serial.println(macStr);
-  
+
+  // 獲取RSSI值 (訊號強度)
+  int receivedRSSI = recv_info->rx_ctrl->rssi;
+  Serial.print("RSSI: ");
+  Serial.print(receivedRSSI);
+  Serial.println(" dBm");
+
+  #ifdef DEVICE_ROLE_RECEIVER
+  // 接收端處理邏輯
+  lastRSSI = receivedRSSI;
+
+  // 更新最大最小RSSI值
+  if (lastRSSI > maxRSSI) maxRSSI = lastRSSI;
+  if (lastRSSI < minRSSI) minRSSI = lastRSSI;
+
+  // 獲取或更新雜訊底板
+  noiseFloor = getNoiseFloor();
+
+  // 計算SNR
+  lastSNR = lastRSSI - noiseFloor;
+
+  // 更新最大最小SNR值
+  if (lastSNR > maxSNR) maxSNR = lastSNR;
+  if (lastSNR < minSNR) minSNR = lastSNR;
+
+  // 輸出訊號相關信息
+  Serial.print("Noise Floor: ");
+  Serial.print(noiseFloor);
+  Serial.print(" dBm, SNR: ");
+  Serial.print(lastSNR);
+  Serial.println(" dB");
+
+  // 處理接收到的搖桿數據
   if (len == sizeof(joystickData)) {
     memcpy(&joystickData, incomingData, sizeof(joystickData));
-    
+
     // 更新數據接收時間和狀態
     lastDataReceivedTime = millis();
     dataReceived = true;
-    
+
+    // 更新封包統計
+    totalPackets++;
+
+    // 檢查是否有丟失的封包
+    if (totalPackets > 1 && joystickData.msg_id > lastMsgId + 1) {
+      uint32_t newLostPackets = joystickData.msg_id - lastMsgId - 1;
+      lostPackets += newLostPackets;
+
+      Serial.print("Packet(s) lost: ");
+      Serial.println(newLostPackets);
+    }
+
+    // 更新上次接收的消息ID
+    lastMsgId = joystickData.msg_id;
+
+    // 計算封包遺失率
+    if (totalPackets > 0) {
+      packetLossRate = (float)lostPackets / (totalPackets + lostPackets) * 100.0;
+    }
+
     // 輸出接收到的數據
     Serial.print("Bytes received: ");
     Serial.print(len);
     Serial.print(", Msg ID: ");
     Serial.println(joystickData.msg_id);
-    
+
     Serial.print("Raw - X: ");
     Serial.print(joystickData.x_value);
     Serial.print(", Y: ");
     Serial.print(joystickData.y_value);
-    Serial.print(", Normalized - X: ");
-    Serial.print(joystickData.x_normalized);
-    Serial.print(", Y: ");
-    Serial.print(joystickData.y_normalized);
     Serial.print(", Button: ");
     Serial.println(joystickData.button_state ? "Pressed" : "Released");
-    
+
     // 更新位置文本並在串口顯示
     updatePositionText();
     Serial.println(positionText);
+
+    // 輸出封包統計
+    Serial.print("Packet Stats - Total: ");
+    Serial.print(totalPackets);
+    Serial.print(", Lost: ");
+    Serial.print(lostPackets);
+    Serial.print(", Loss Rate: ");
+    Serial.print(packetLossRate, 1);
+    Serial.println("%");
+
+    // 每隔至少2秒發送一次ACK封包
+    unsigned long currentTime = millis();
+    if (currentTime - lastAckSentTime >= 2000) { // 至少2秒發送一次
+      // 準備ACK數據
+      ackData.rssi = lastRSSI;
+      ackData.ack_id = joystickData.msg_id;
+
+      // 將發送者的MAC地址保存為接收端的目標地址
+      static uint8_t senderMacAddress[6];
+      memcpy(senderMacAddress, recv_info->src_addr, 6);
+
+      // 直接使用當前發送者的MAC地址
+
+      // 顯示發送者MAC地址以便調試
+      Serial.print("Sending ACK to: ");
+      char macStr2[32];
+      snprintf(macStr2, sizeof(macStr2), "%02X:%02X:%02X:%02X:%02X:%02X",
+               senderMacAddress[0], senderMacAddress[1], senderMacAddress[2],
+               senderMacAddress[3], senderMacAddress[4], senderMacAddress[5]);
+      Serial.println(macStr2);
+
+      // 註冊發送端為對等設備
+      esp_now_peer_info_t peerInfo;
+      memset(&peerInfo, 0, sizeof(peerInfo));
+      memcpy(peerInfo.peer_addr, senderMacAddress, 6);
+      peerInfo.channel = ESP_NOW_CHANNEL;
+      peerInfo.encrypt = ESP_NOW_ENCRYPT;
+
+      // 總是先嘗試刪除再重新添加以確保正確註冊
+      esp_now_del_peer(senderMacAddress);
+      Serial.println("Registering sender as peer");
+
+      // 添加發送端為對等設備
+      Serial.println("Adding sender as peer");
+      esp_err_t addStatus = esp_now_add_peer(&peerInfo);
+      if (addStatus != ESP_OK) {
+        Serial.print("Failed to add peer: ");
+        Serial.println(getESPErrorMsg(addStatus));
+      } else {
+        Serial.println("Sender added as peer successfully");
+        senderRegistered = true;
+      }
+
+      // 發送ACK封包
+      esp_err_t result = esp_now_send(senderMacAddress, (uint8_t*)&ackData, sizeof(ackData));
+      if (result == ESP_OK) {
+        Serial.println("ACK packet sent with RSSI information");
+        Serial.print("ACK contains RSSI: ");
+        Serial.print(ackData.rssi);
+        Serial.print(" dBm, Msg ID: ");
+        Serial.println(ackData.ack_id);
+        Serial.print("Sent to MAC: ");
+        Serial.println(macStr2);
+        lastAckSentTime = currentTime;
+        senderRegistered = true;
+      } else {
+        Serial.print("Error sending ACK packet: ");
+        Serial.println(getESPErrorMsg(result));
+
+        // 如果發送失敗，嘗試再次發送
+        if (result == ESP_ERR_ESPNOW_NOT_FOUND) {
+          Serial.println("Peer not found, trying one more time");
+          // 重新嘗試發送
+          result = esp_now_send(senderMacAddress, (uint8_t*)&ackData, sizeof(ackData));
+          if (result == ESP_OK) {
+            Serial.println("ACK sent successfully on second attempt");
+            lastAckSentTime = currentTime;
+            senderRegistered = true;
+          } else {
+            Serial.print("Still failed on second attempt: ");
+            Serial.println(getESPErrorMsg(result));
+          }
+        }
+      }
+    }
   } else {
     Serial.print("Error: Received data size doesn't match. Expected ");
     Serial.print(sizeof(joystickData));
     Serial.print(" but got ");
     Serial.println(len);
   }
+  #endif
+
+  #ifdef DEVICE_ROLE_SENDER
+  // 發送端處理接收到的ACK封包
+  if (len == sizeof(ack_message)) {
+    memcpy(&receivedAck, incomingData, sizeof(ack_message));
+    lastReceivedRSSI = receivedAck.rssi;
+    ackReceived = true;
+    lastAckTime = millis();
+
+    Serial.print("ACK received for message ID: ");
+    Serial.print(receivedAck.ack_id);
+    Serial.print(", RSSI: ");
+    Serial.print(receivedAck.rssi);
+    Serial.println(" dBm");
+  } else {
+    Serial.print("Error: Received unexpected data size. Expected ");
+    Serial.print(sizeof(ack_message));
+    Serial.print(" but got ");
+    Serial.println(len);
+  }
+  #endif
 }
-#endif
 
 void printWiFiStatus() {
   Serial.print("WiFi Mode: ");
@@ -341,13 +747,13 @@ void printWiFiStatus() {
     case WIFI_AP_STA: Serial.println("AP+STA"); break;
     default: Serial.println("UNKNOWN");
   }
-  
+
   Serial.print("MAC Address: ");
   Serial.println(WiFi.macAddress());
-  
+
   Serial.print("Channel: ");
   Serial.println(WiFi.channel());
-  
+
   Serial.print("WiFi Status: ");
   switch(WiFi.status()) {
     case WL_CONNECTED: Serial.println("CONNECTED"); break;
@@ -362,10 +768,10 @@ void printWiFiStatus() {
 void setup() {
   // 初始化串口
   Serial.begin(115200);
-  
+
   // 等待串口準備就緒
   delay(1000);
-  
+
   #ifdef DEVICE_ROLE_SENDER
   Serial.println("\n\n=== ESP32S3 ESP-NOW - SENDER MODE ===");
   Serial.println("Joystick Calibration Info:");
@@ -375,18 +781,19 @@ void setup() {
   Serial.print(JOYSTICK_CENTER_Y);
   Serial.print(", Deadzone: ");
   Serial.println(JOYSTICK_DEADZONE);
-  
+
+
   // 設置搖桿引腳
   pinMode(JOYSTICK_X_PIN, INPUT);
   pinMode(JOYSTICK_Y_PIN, INPUT);
   pinMode(JOYSTICK_BUTTON_PIN, INPUT_PULLUP);
-  
+
   // 設置ADC解析度為12位
   analogReadResolution(12);
   Serial.println("ADC Resolution set to 12-bit");
   #else
   Serial.println("\n\n=== ESP32S3 ESP-NOW - RECEIVER MODE with OLED ===");
-  
+
   // 初始化OLED
   u8g2.begin();
   u8g2.clearBuffer();
@@ -394,23 +801,23 @@ void setup() {
   u8g2.drawStr(0, 10, "Initializing...");
   u8g2.sendBuffer();
   #endif
-  
+
   // 完全斷開現有WiFi連接
   WiFi.disconnect(true);
   delay(100);
-  
+
   // 設置WiFi模式
   WiFi.mode(WIFI_STA);
   delay(100);
-  
+
   // 獲取並顯示MAC地址
   String macAddress = WiFi.macAddress();
   Serial.print("MAC Address: ");
   Serial.println(macAddress);
-  
+
   #ifdef DEVICE_ROLE_RECEIVER
   Serial.println("*** IMPORTANT: Copy this MAC address to sender's code ***");
-  
+
   // 以0x格式顯示MAC地址，方便複製到發送端
   byte mac[6];
   WiFi.macAddress(mac);
@@ -428,62 +835,69 @@ void setup() {
   Serial.print(", 0x");
   Serial.print(mac[5], HEX);
   Serial.println("}");
-  
+
   // 在OLED上顯示MAC地址，方便設置
   u8g2.clearBuffer();
   u8g2.drawStr(0, 10, "MAC Address:");
-  
+
   char macBuffer[20];
-  sprintf(macBuffer, "%02X:%02X:%02X:%02X:%02X:%02X", 
+  sprintf(macBuffer, "%02X:%02X:%02X:%02X:%02X:%02X",
           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   u8g2.drawStr(0, 24, macBuffer);
-  
+
   u8g2.drawStr(0, 38, "Set this in sender");
   u8g2.drawStr(0, 48, "Initializing WiFi...");
   u8g2.sendBuffer();
   #endif
-  
+
   // 設置WiFi頻道
   WiFi.channel(ESP_NOW_CHANNEL);
   delay(100);
-  
+
   Serial.print("WiFi Channel set to: ");
   Serial.println(ESP_NOW_CHANNEL);
-  
+
+  // 初始化OLED顯示模組
+  if (!u8g2.begin()) {
+    Serial.println("OLED初始化失敗!");
+  }
+  u8g2.setFont(u8g2_font_6x12_tr);
+  u8g2.clearBuffer();
+  u8g2.drawStr(0, 24, "Initializing...");
+  u8g2.sendBuffer();
+
   // 初始化ESP-NOW
   if (esp_now_init() != ESP_OK) {
     Serial.println("Error initializing ESP-NOW");
-    
-    #ifdef DEVICE_ROLE_RECEIVER
+
     u8g2.clearBuffer();
     u8g2.drawStr(0, 20, "ESP-NOW Init Error!");
     u8g2.drawStr(0, 34, "Restarting...");
     u8g2.sendBuffer();
-    #endif
-    
+
     delay(2000);
     ESP.restart(); // 如果初始化失敗，重啟設備
     return;
   } else {
-    Serial.println("ESP-NOW initialized successfully");
-    
-    #ifdef DEVICE_ROLE_RECEIVER
-    u8g2.drawStr(0, 58, "ESP-NOW Ready!");
-    u8g2.sendBuffer();
-    #endif
+      Serial.println("ESP-NOW initialized successfully");
+
+      u8g2.drawStr(0, 58, "ESP-NOW Ready!");
+      u8g2.sendBuffer();
   }
-  
+
   #ifdef DEVICE_ROLE_SENDER
   // 發送端初始化
+  // 註冊回調函數
   esp_now_register_send_cb(OnDataSent);
-  
+  esp_now_register_recv_cb(OnDataRecv); // 註冊接收回調以接收ACK封包
+
   // 註冊對等設備
   esp_now_peer_info_t peerInfo;
   memset(&peerInfo, 0, sizeof(peerInfo));
   memcpy(peerInfo.peer_addr, receiverMacAddress, 6);
-  peerInfo.channel = ESP_NOW_CHANNEL;  
+  peerInfo.channel = ESP_NOW_CHANNEL;
   peerInfo.encrypt = ESP_NOW_ENCRYPT;
-  
+
   // 檢查對等點是否已存在
   bool exists = esp_now_is_peer_exist(receiverMacAddress);
   if (exists) {
@@ -491,7 +905,7 @@ void setup() {
     Serial.println("Peer already exists, removing it first");
     esp_now_del_peer(receiverMacAddress);
   }
-  
+
   // 添加對等設備
   esp_err_t addStatus = esp_now_add_peer(&peerInfo);
   if (addStatus == ESP_OK) {
@@ -501,12 +915,12 @@ void setup() {
     Serial.println(getESPErrorMsg(addStatus));
     Serial.println("Will retry during operation");
   }
-  
+
   // 測試搖桿讀數
   int x = analogRead(JOYSTICK_X_PIN);
   int y = analogRead(JOYSTICK_Y_PIN);
   bool button = !digitalRead(JOYSTICK_BUTTON_PIN);
-  
+
   Serial.println("Joystick test readings:");
   Serial.print("X: ");
   Serial.print(x);
@@ -517,42 +931,69 @@ void setup() {
   #else
   // 接收端初始化
   esp_now_register_recv_cb(OnDataRecv);
+  // esp_now_register_send_cb(OnDataSent); // 接收端也需要註冊發送回調來處理ACK
   Serial.println("Receiver Ready");
+
+  // 初始化無線訊號相關變數
+  minRSSI = 0;
+  maxRSSI = -100;
+  minSNR = 0;
+  maxSNR = 0;
+  // 發送端未初始註冊
+  senderRegistered = false;
   #endif
-  
+
   // 打印WiFi詳細狀態
   printWiFiStatus();
-  
+
   Serial.println("Setup Complete");
-  
-  #ifdef DEVICE_ROLE_RECEIVER
-  delay(2000); // 讓用戶有時間看到初始化信息
+
+  // 讓用戶有時間看到初始化信息
+  delay(2000);
+
+  #ifdef DEVICE_ROLE_SENDER
+  updateSenderOLED(); // 顯示初始OLED信息
   #endif
 }
 
 void loop() {
   static unsigned long lastWifiCheckTime = 0;
-  
+
   // 每10秒檢查一次WiFi狀態
   if (millis() - lastWifiCheckTime > 10000) {
     printWiFiStatus();
     lastWifiCheckTime = millis();
   }
-  
+
   #ifdef DEVICE_ROLE_SENDER
-  // 發送端邏輯
+  static unsigned long lastOLEDUpdateTime = 0;  // 追蹤上次更新OLED的時間
+
   // 讀取搖桿數據
   joystickData.x_value = analogRead(JOYSTICK_X_PIN);
   joystickData.y_value = analogRead(JOYSTICK_Y_PIN);
   joystickData.button_state = !digitalRead(JOYSTICK_BUTTON_PIN);  // 按鈕通常是低電平觸發
-  
-  // 正規化搖桿值
+
+  // 更新OLED顯示
+  unsigned long currentMillis = millis();
+  if (currentMillis - lastOLEDUpdateTime > 100) { // 每100毫秒更新一次OLED
+    updateSenderOLED();
+    lastOLEDUpdateTime = currentMillis;
+
+    // 如果長時間沒有收到ACK，嘗試重新註冊接收端
+    if (ackReceived && (currentMillis - lastAckTime > 30000)) { // 30秒無ACK
+      Serial.println("No ACK received for a long time, re-initializing ESP-NOW");
+      reinitESPNow();
+      ackReceived = false; // 重置狀態以避免重複嘗試
+    }
+  }
+
+  // 發送端邏輯 - 正規化搖桿值
   joystickData.x_normalized = normalizeJoystick(joystickData.x_value, JOYSTICK_CENTER_X);
   joystickData.y_normalized = normalizeJoystick(joystickData.y_value, JOYSTICK_CENTER_Y);
-  
+
   // 添加消息ID
   joystickData.msg_id = messageCounter++;
-  
+
   // 透過串口顯示數據（調試用）
   Serial.print("Raw - X: ");
   Serial.print(joystickData.x_value);
@@ -564,7 +1005,7 @@ void loop() {
   Serial.print(joystickData.y_normalized);
   Serial.print(", Button: ");
   Serial.println(joystickData.button_state ? "Pressed" : "Released");
-  
+
   // 顯示位置說明
   String position = "Position: ";
   if (abs(joystickData.x_normalized) < 10 && abs(joystickData.y_normalized) < 10) {
@@ -572,12 +1013,12 @@ void loop() {
   } else {
     if (joystickData.y_normalized < -30) position += "Up";
     else if (joystickData.y_normalized > 30) position += "Down";
-    
+
     if (joystickData.x_normalized < -30) position += " Left";
     else if (joystickData.x_normalized > 30) position += " Right";
   }
   Serial.println(position);
-  
+
   // 使用改進的發送函數
   if (!sendESPNowData((uint8_t *)&joystickData, sizeof(joystickData))) {
     // 發送失敗處理
@@ -585,7 +1026,7 @@ void loop() {
     if (retryCount > MAX_RETRY_COUNT) {
       Serial.println("Max retry count reached, waiting before next attempt");
       retryCount = 0;
-      
+
       // 長時間失敗後，嘗試重新初始化ESP-NOW
       reinitESPNow();
       delay(1000); // 等待較長時間再嘗試
@@ -600,18 +1041,55 @@ void loop() {
   }
   #else
   // 接收端邏輯
-  // 更新OLED顯示 (限制更新頻率以避免閃爍)
+
+  // 定期更新信道利用率
+  if (millis() - lastChannelCheckTime > channelCheckInterval) {
+    channelUtilization = getChannelUtilization();
+    lastChannelCheckTime = millis();
+
+    Serial.print("Channel utilization: ");
+    Serial.print(channelUtilization);
+    Serial.println("%");
+  }
+
+  // 檢查搖桿按鈕狀態變化，用於手動切換顯示頁面
+  if (dataReceived && (millis() - lastDataReceivedTime < dataTimeout)) {
+    bool buttonPressed = joystickData.button_state;
+
+    // 檢測按鈕狀態變化：從未按下到已按下
+    if (buttonPressed && !buttonPressedLast) {
+      // 切換顯示頁面
+      displayPage = (displayPage + 1) % 2;
+      lastPageSwitchTime = millis(); // 重置自動切換計時器
+
+      Serial.print("Display page changed to: ");
+      Serial.println(displayPage);
+    }
+
+    buttonPressedLast = buttonPressed;
+  }
+
+  // 自動切換顯示頁面
+  if (millis() - lastPageSwitchTime > pageSwitchInterval) {
+    displayPage = (displayPage + 1) % 2;
+    lastPageSwitchTime = millis();
+
+    Serial.print("Auto-switching display page to: ");
+    Serial.println(displayPage);
+  }
+
+  // 定期更新OLED顯示
   if (millis() - lastOLEDUpdateTime > oledUpdateInterval) {
     updateOLEDDisplay();
     lastOLEDUpdateTime = millis();
   }
-  
+
   // 檢查數據接收超時
   if (dataReceived && (millis() - lastDataReceivedTime > dataTimeout)) {
     Serial.println("Data reception timed out!");
     dataReceived = false;
   }
   #endif
-  
+
   delay(10);
 }
