@@ -45,8 +45,8 @@ bool senderRegistered = false;         // 發送端是否已註冊為對等設�
 #define MAX_RETRY_COUNT 3      // 發送失敗時的最大重試次數
 
 // 搖桿校正值
-#define JOYSTICK_CENTER_X 778  // X軸中心位置
-#define JOYSTICK_CENTER_Y 762  // Y軸中心位置
+#define JOYSTICK_CENTER_X 2047  // X軸中心位置
+#define JOYSTICK_CENTER_Y 2047  // Y軸中心位置
 #define JOYSTICK_MAX 4095      // ESP32S3的12位ADC最大值
 #define JOYSTICK_DEADZONE 50   // 死區，忽略小幅度移動
 
@@ -99,9 +99,6 @@ uint32_t totalPackets = 0;             // 接收到的總封包數
 uint32_t lastMsgId = 0;                // 上次接收到的消息ID
 uint32_t lostPackets = 0;              // 丟失的封包數
 float packetLossRate = 0.0;            // 封包遺失率
-unsigned long channelCheckInterval = 5000; // 檢查信道利用率的間隔
-unsigned long lastChannelCheckTime = 0; // 上次檢查信道的時間
-int channelUtilization = 0;            // 信道利用率 (百分比)
 uint8_t displayPage = 0;               // 當前顯示頁面 (0: RSSI/SNR, 1: 封包統計)
 unsigned long lastPageSwitchTime = 0;  // 上次切換顯示頁面的時間
 const unsigned long pageSwitchInterval = 5000; // 自動切換顯示頁面的間隔
@@ -353,7 +350,7 @@ void updateOLEDPage0() {
   u8g2.setFont(u8g2_font_6x12_tr);
 
   // 標題
-  u8g2.drawStr(0, 10, "ESP-NOW Signal Quality");
+  u8g2.drawStr(0, 10, "Signal & Packets"); // Changed title
   u8g2.drawLine(0, 12, 128, 12);
 
   // 檢查是否有數據以及數據是否超時
@@ -369,12 +366,16 @@ void updateOLEDPage0() {
   sprintf(buffer, "RSSI: %d dBm (%d%%)", lastRSSI, signalStrength);
   u8g2.drawStr(0, 24, buffer);
 
-  // 顯示信道利用率
-  sprintf(buffer, "Channel: %d (%d%%)", ESP_NOW_CHANNEL, channelUtilization);
+  // 顯示封包統計信息 (移至Page0)
+  sprintf(buffer, "Pkts: %lu/%lu", totalPackets, lostPackets); // Combined Total and Lost
   u8g2.drawStr(0, 36, buffer); // Y座標調整為36
 
-  // 繪製信道利用率進度條
-  drawProgressBar(96, 30, 32, 6, channelUtilization); // Y座標調整為30
+  sprintf(buffer, "Loss: %.1f%%", packetLossRate);
+  u8g2.drawStr(0, 48, buffer); // Y座標調整為48
+
+  // 繪製封包遺失率進度條
+  // Text for Loss Rate is at Y=48. Bar at Y=42
+  drawProgressBar(90, 42, 35, 6, (int)(packetLossRate)); // Y座標調整為42
 }
 
 // 更新OLED顯示 - 第二頁：封包統計和搖桿數據
@@ -385,7 +386,7 @@ void updateOLEDPage1() {
   u8g2.setFont(u8g2_font_6x12_tr);
 
   // 標題
-  u8g2.drawStr(0, 10, "Packet Stats & Joystick");
+  u8g2.drawStr(0, 10, "Joystick Info"); // Changed title
   u8g2.drawLine(0, 12, 128, 12);
 
   // 檢查是否有數據以及數據是否超時
@@ -394,33 +395,22 @@ void updateOLEDPage1() {
     return;
   }
 
-  // 顯示封包統計信息
-  char buffer[32];
+  // 顯示搖桿數據
+  char buffer[40]; // Increased buffer size for longer strings
 
-  sprintf(buffer, "Total: %lu", totalPackets);
+  // 第1行: Raw X 和 Normalized X
+  sprintf(buffer, "X:%4d NX:%4d", joystickData.x_value, joystickData.x_normalized);
   u8g2.drawStr(0, 24, buffer);
 
-  sprintf(buffer, "Lost: %lu", lostPackets);
-  u8g2.drawStr(60, 24, buffer);
-
-  sprintf(buffer, "Loss Rate: %.1f%%", packetLossRate);
+  // 第2行: Raw Y 和 Normalized Y
+  sprintf(buffer, "Y:%4d NY:%4d", joystickData.y_value, joystickData.y_normalized);
   u8g2.drawStr(0, 36, buffer);
 
-  // 繪製封包遺失率進度條
-  drawProgressBar(90, 30, 35, 6, (int)(packetLossRate));
-
-  // 顯示搖桿數據
-  sprintf(buffer, "X: %d", joystickData.x_value);
+  // 第3行: 按鈕狀態
+  sprintf(buffer, "Button: %s", joystickData.button_state ? "Pressed" : "Released");
   u8g2.drawStr(0, 48, buffer);
 
-  sprintf(buffer, "Y: %d", joystickData.y_value);
-  u8g2.drawStr(64, 48, buffer);
-
-  // 顯示按鈕狀態和位置
-  sprintf(buffer, "Btn: %s", joystickData.button_state ? "Pressed" : "Released");
-  u8g2.drawStr(0, 60, buffer);
-
-  // 顯示相對位置
+  // 第4行: 位置
   String position = "";
   if (abs(joystickData.x_normalized) < 10 && abs(joystickData.y_normalized) < 10) {
     position = "Center";
@@ -437,9 +427,8 @@ void updateOLEDPage1() {
       position += "Right";
     }
   }
-
-  sprintf(buffer, "Pos: %s", position.c_str());
-  u8g2.drawStr(64, 60, buffer);
+  sprintf(buffer, "Position: %s", position.c_str());
+  u8g2.drawStr(0, 60, buffer);
 }
 #endif // DEVICE_ROLE_RECEIVER
 
@@ -997,17 +986,6 @@ void loop() {
   }
   #else
   // 接收端邏輯
-
-  // 定期更新信道利用率
-  if (millis() - lastChannelCheckTime > channelCheckInterval) {
-    channelUtilization = getChannelUtilization();
-    lastChannelCheckTime = millis();
-
-    Serial.print("Channel utilization: ");
-    Serial.print(channelUtilization);
-    Serial.println("%");
-  }
-
   // 檢查搖桿按鈕狀態變化，用於手動切換顯示頁面
   if (dataReceived && (millis() - lastDataReceivedTime < dataTimeout)) {
     bool buttonPressed = joystickData.button_state;
