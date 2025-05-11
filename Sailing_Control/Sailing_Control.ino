@@ -6,8 +6,8 @@
 
 // ===== 重要：在這裡選擇設備角色 =====
 // 取消註釋其中一個，並註釋另一個
-#define DEVICE_ROLE_SENDER     // 取消此行註釋使設備成為發送端
-// #define DEVICE_ROLE_RECEIVER // 取消此行註釋使設備成為接收端
+// #define DEVICE_ROLE_SENDER     // 取消此行註釋使設備成為發送端
+#define DEVICE_ROLE_RECEIVER // 取消此行註釋使設備成為接收端
 
 // 檢查是否正確定義了角色
 #if defined(DEVICE_ROLE_SENDER) && defined(DEVICE_ROLE_RECEIVER)
@@ -27,26 +27,50 @@ U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 // 定義類比搖桿的引腳
 #define JOYSTICK_X_PIN A0     // 類比搖桿X軸
 #define JOYSTICK_Y_PIN A1     // 類比搖桿Y軸
-#define JOYSTICK_BUTTON_PIN 2 // 搖桿按鈕連接到D2
+#define JOYSTICK_BUTTON_PIN D2 // 搖桿按鈕連接到D2
 
 // **重要** 在發送端模式，設置接收端的MAC地址（從接收端的Serial輸出獲取）
 // 示例格式: {0x24, 0x0A, 0xC4, 0x9A, 0x58, 0x28}
 // uint8_t receiverMacAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; // 替換為接收端的實際MAC地址
 uint8_t receiverMacAddress[] = {0xD8, 0x3B, 0xDA, 0x74, 0x1C, 0xEC}; // 替換為接收端的實際MAC地址
 
+// 搖桿校正值 - 將這些定義移到使用它們的全局變量之前
+#define JOYSTICK_CENTER_X 2047  // X軸中心位置 (將被接收端的可變中心值取代)
+#define JOYSTICK_CENTER_Y 2047  // Y軸中心位置 (將被接收端的可變中心值取代)
+
+// Sender端使用的固定中心值 (如果需要與接收端校準值不同)
+#define JOYSTICK_CENTER_X_SENDER 2047  // Sender X軸中心位置
+#define JOYSTICK_CENTER_Y_SENDER 2047  // Sender Y軸中心位置
+
+#ifdef DEVICE_ROLE_SENDER
+// 校準後的搖桿中心值 (發送端使用)
+int calibrated_joystick_center_x_sender = JOYSTICK_CENTER_X_SENDER; // 初始化為默認中心值
+int calibrated_joystick_center_y_sender = JOYSTICK_CENTER_Y_SENDER; // 初始化為默認中心值
+#endif
+
 // 在接收端模式，存儲發送端的MAC地址
 #ifdef DEVICE_ROLE_RECEIVER
 bool senderRegistered = false;         // 發送端是否已註冊為對等設備
+uint8_t displayPage = 1;               // 當前顯示頁面 (0: RSSI/Packets, 1: Joystick)
+
+// 校準後的搖桿中心值 (接收端使用)
+int calibrated_joystick_center_x = JOYSTICK_CENTER_X; // 初始化為默認中心值
+int calibrated_joystick_center_y = JOYSTICK_CENTER_Y; // 初始化為默認中心值
 #endif
+
+// 定義按鈕事件類型
+typedef enum {
+  NO_EVENT = 0,
+  SINGLE_CLICK,
+  DOUBLE_CLICK,
+  LONG_PRESS
+} ButtonEventType;
 
 // ESP-NOW通信參數
 #define ESP_NOW_CHANNEL 1      // 設置ESP-NOW頻道 (1-14)，兩端必須相同
 #define ESP_NOW_ENCRYPT false  // 是否加密傳輸
 #define MAX_RETRY_COUNT 3      // 發送失敗時的最大重試次數
 
-// 搖桿校正值
-#define JOYSTICK_CENTER_X 2047  // X軸中心位置
-#define JOYSTICK_CENTER_Y 2047  // Y軸中心位置
 #define JOYSTICK_MAX 4095      // ESP32S3的12位ADC最大值
 #define JOYSTICK_DEADZONE 50   // 死區，忽略小幅度移動
 
@@ -56,8 +80,9 @@ typedef struct joystick_message {
   int y_value;         // 原始Y值
   int x_normalized;    // 正規化後的X值 (-100 到 100)
   int y_normalized;    // 正規化後的Y值 (-100 到 100)
-  bool button_state;   // 按鈕狀態
+  bool button_state;   // 按鈕當前物理狀態 (Pressed/Released)
   uint32_t msg_id;     // 消息ID，用於追蹤
+  uint8_t button_event; // 按鈕觸發的事件類型 (0:NO_EVENT, 1:SINGLE, 2:DOUBLE, 3:LONG)
 } joystick_message;
 
 // ACK封包結構體 - 用於發送確認和RSSI值
@@ -69,6 +94,8 @@ typedef struct ack_message {
 // 創建數據結構實例
 joystick_message joystickData;
 ack_message ackData;          // ACK封包數據結構
+
+// Sender端的特定變數
 #ifdef DEVICE_ROLE_SENDER
 uint32_t messageCounter = 0;  // 消息計數器
 ack_message receivedAck;      // 接收到的ACK封包
@@ -77,6 +104,16 @@ bool ackReceived = false;     // 是否收到ACK
 unsigned long lastAckTime = 0; // 上次接收ACK的時間
 int retryCount = 0;           // 重試計數器
 bool lastSendSuccess = true;  // 上次發送是否成功
+
+// 按鈕事件檢測相關變量
+bool lastButtonState = false;         // 上一個按鈕狀態
+unsigned long buttonPressTime = 0;    // 按鈕按下的時間
+unsigned long buttonReleaseTime = 0;  // 按鈕釋放的時間
+int buttonClickCount = 0;             // 短時間內的點擊次數
+const unsigned long doubleClickGap = 250; // 雙擊的最大間隔 (毫秒)
+const unsigned long longPressDuration = 3000; // 長按的持續時間 (毫秒)
+bool longPressActive = false;         // 長按是否已觸發並處理
+ButtonEventType currentButtonEvent = NO_EVENT; // 當前檢測到的按鈕事件
 #endif
 
 #ifdef DEVICE_ROLE_RECEIVER
@@ -99,10 +136,10 @@ uint32_t totalPackets = 0;             // 接收到的總封包數
 uint32_t lastMsgId = 0;                // 上次接收到的消息ID
 uint32_t lostPackets = 0;              // 丟失的封包數
 float packetLossRate = 0.0;            // 封包遺失率
-uint8_t displayPage = 0;               // 當前顯示頁面 (0: RSSI/SNR, 1: 封包統計)
+// uint8_t displayPage = 0; // 已在 #ifdef DEVICE_ROLE_RECEIVER 內部定義，此處移除
 unsigned long lastPageSwitchTime = 0;  // 上次切換顯示頁面的時間
 const unsigned long pageSwitchInterval = 5000; // 自動切換顯示頁面的間隔
-bool buttonPressedLast = false;        // 上次按鈕狀態
+bool buttonPressedLast_receiver = false; // 用於接收端按鈕邏輯 (之前叫buttonPressedLast，為避免混淆改名)
 #endif
 
 // 獲取當前WiFi信道的利用率 (估算)
@@ -572,16 +609,35 @@ void OnDataRecv(const esp_now_recv_info_t *recv_info, const uint8_t *incomingDat
     Serial.println(positionText);
 
     // 輸出封包統計
-    Serial.print("Packet Stats - Total: ");
-    Serial.print(totalPackets);
-    Serial.print(", Lost: ");
-    Serial.print(lostPackets);
-    Serial.print(", Loss Rate: ");
-    Serial.print(packetLossRate, 1);
-    Serial.println("%");
+      Serial.print("Packet Stats - Total: ");
+      Serial.print(totalPackets);
+      Serial.print(", Lost: ");
+      Serial.print(lostPackets);
+      Serial.print(", Loss Rate: ");
+      Serial.print(packetLossRate, 1);
+      Serial.println("%");
 
-    // 每隔至少2秒發送一次ACK封包
-    unsigned long currentTime = millis();
+      // --- 處理按鈕事件 ---
+      ButtonEventType receivedEvent = (ButtonEventType)joystickData.button_event;
+      if (receivedEvent != NO_EVENT) {
+        Serial.print("Received Button Event: ");
+        Serial.println(receivedEvent);
+      }
+
+      if (receivedEvent == DOUBLE_CLICK) {
+        displayPage = (displayPage + 1) % 2; // 切換顯示頁面
+        lastPageSwitchTime = millis(); // 重置自動切換計時器，讓手動切換優先
+        Serial.print("Receiver: OLED Page switched to ");
+        Serial.println(displayPage);
+      } else if (receivedEvent == LONG_PRESS) {
+        // Calibration is now done on the sender side.
+        // Receiver will still log this event if Serial output for receivedEvent is active.
+        Serial.println("Receiver: Received LONG_PRESS event. Calibration is handled by sender.");
+      }
+      // --- 按鈕事件處理結束 ---
+
+      // 每隔至少2秒發送一次ACK封包
+      unsigned long currentTime = millis();
     if (currentTime - lastAckSentTime >= 2000) { // 至少2秒發送一次
       // 準備ACK數據
       ackData.rssi = lastRSSI;
@@ -721,11 +777,11 @@ void setup() {
 
   #ifdef DEVICE_ROLE_SENDER
   Serial.println("\n\n=== ESP32S3 ESP-NOW - SENDER MODE ===");
-  Serial.println("Joystick Calibration Info:");
+  Serial.println("Joystick Calibration Info (Initial):");
   Serial.print("Center X: ");
-  Serial.print(JOYSTICK_CENTER_X);
+  Serial.print(calibrated_joystick_center_x_sender);
   Serial.print(", Center Y: ");
-  Serial.print(JOYSTICK_CENTER_Y);
+  Serial.print(calibrated_joystick_center_y_sender);
   Serial.print(", Deadzone: ");
   Serial.println(JOYSTICK_DEADZONE);
 
@@ -916,7 +972,87 @@ void loop() {
   // 讀取搖桿數據
   joystickData.x_value = analogRead(JOYSTICK_X_PIN);
   joystickData.y_value = analogRead(JOYSTICK_Y_PIN);
-  joystickData.button_state = !digitalRead(JOYSTICK_BUTTON_PIN);  // 按鈕通常是低電平觸發
+  bool currentButtonState = !digitalRead(JOYSTICK_BUTTON_PIN);  // 按鈕通常是低電平觸發
+  joystickData.button_state = currentButtonState;
+
+  // --- 按鈕事件檢測邏輯 ---
+  currentButtonEvent = NO_EVENT; // 重置當前事件
+  unsigned long currentTime = millis();
+
+  if (currentButtonState != lastButtonState) {
+    if (currentButtonState) { // 按鈕被按下
+      buttonPressTime = currentTime;
+      buttonClickCount++;
+      longPressActive = false; // 重置長按標記
+    } else { // 按鈕被釋放
+      buttonReleaseTime = currentTime;
+      if (!longPressActive) { // 只有在長按未被觸發時才判斷單擊/雙擊
+        if (currentTime - buttonPressTime < doubleClickGap) {
+          // 這是短按的一部分，等待看是否是雙擊
+        } else {
+          // 如果超過雙擊間隔但不足以構成雙擊的第二次點擊，則可能是單擊
+          // 但我們在檢測到第二次按下時或超時後處理單擊/雙擊
+        }
+      }
+    }
+    lastButtonState = currentButtonState;
+  }
+
+  // 檢測雙擊和超時的單擊
+  if (buttonClickCount > 0 && !currentButtonState && (currentTime - buttonPressTime > doubleClickGap)) {
+    if (buttonClickCount == 1) {
+      currentButtonEvent = SINGLE_CLICK;
+      Serial.println("Button Event: SINGLE_CLICK");
+    } else if (buttonClickCount >= 2) { // 處理雙擊及更多次點擊（通常只關心雙擊）
+      currentButtonEvent = DOUBLE_CLICK;
+      Serial.println("Button Event: DOUBLE_CLICK");
+    }
+    buttonClickCount = 0; // 重置點擊計數
+  }
+
+  // 檢測長按
+  if (currentButtonState && !longPressActive && (currentTime - buttonPressTime >= longPressDuration)) {
+    currentButtonEvent = LONG_PRESS;
+    Serial.println("Button Event: LONG_PRESS");
+    longPressActive = true; // 標記長按已觸發，避免重複觸發或觸發單擊/雙擊
+    buttonClickCount = 0; // 長按後不應再觸發單擊/雙擊
+
+    // Sender-side joystick calibration
+    calibrated_joystick_center_x_sender = joystickData.x_value;
+    calibrated_joystick_center_y_sender = joystickData.y_value;
+    Serial.println("Sender: Joystick center recalibrated!");
+    Serial.print("New Center X: ");
+    Serial.print(calibrated_joystick_center_x_sender);
+    Serial.print(", New Center Y: ");
+    Serial.println(calibrated_joystick_center_y_sender);
+
+    // Display calibration success on sender's OLED
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_ncenB10_tr); // Use a slightly larger font
+    u8g2.drawStr(0, 10, "Center Calibrated!");
+    char calibInfoSender[30];
+    sprintf(calibInfoSender, "X:%d Y:%d", calibrated_joystick_center_x_sender, calibrated_joystick_center_y_sender);
+    u8g2.drawStr(0, 25, calibInfoSender);
+    u8g2.sendBuffer();
+    // Note: A long delay here might affect responsiveness.
+    // Consider making this a timed display handled by updateSenderOLED()
+    // For now, keep it simple like the receiver's previous behavior.
+    // unsigned long calibDisplayStartTime = millis();
+    // while(millis() - calibDisplayStartTime < 2000) { /* allow ESP-NOW to process */ delay(1); }
+    // Instead of a blocking delay, we could set a flag for updateSenderOLED to show this message for a duration.
+    // For simplicity now, we'll just update OLED and continue. The main OLED update will overwrite it.
+    // Or, if a short display is acceptable:
+    // delay(2000); // Display for 2 seconds, then it will be overwritten by regular OLED update
+    // To avoid blocking, this message will be shown until the next OLED update.
+  }
+
+  // 如果按鈕釋放了，並且之前是長按狀態，則重置 longPressActive
+  if (!currentButtonState && longPressActive) {
+      longPressActive = false;
+  }
+
+  joystickData.button_event = (uint8_t)currentButtonEvent;
+  // --- 按鈕事件檢測邏輯結束 ---
 
   // 更新OLED顯示
   unsigned long currentMillis = millis();
@@ -932,9 +1068,16 @@ void loop() {
     }
   }
 
-  // 發送端邏輯 - 正規化搖桿值
-  joystickData.x_normalized = normalizeJoystick(joystickData.x_value, JOYSTICK_CENTER_X);
-  joystickData.y_normalized = normalizeJoystick(joystickData.y_value, JOYSTICK_CENTER_Y);
+  // 正規化搖桿值
+  #if defined(DEVICE_ROLE_SENDER)
+    // Sender 端使用校準後的中心值
+    joystickData.x_normalized = normalizeJoystick(joystickData.x_value, calibrated_joystick_center_x_sender);
+    joystickData.y_normalized = normalizeJoystick(joystickData.y_value, calibrated_joystick_center_y_sender);
+  // #elif defined(DEVICE_ROLE_RECEIVER)
+  //   // Receiver 端使用其自身的校準後的中心值 (這些值在接收端初始化，不再通過長按事件更新)
+  //   joystickData.x_normalized = normalizeJoystick(joystickData.x_value, calibrated_joystick_center_x);
+  //   joystickData.y_normalized = normalizeJoystick(joystickData.y_value, calibrated_joystick_center_y);
+  #endif
 
   // 添加消息ID
   joystickData.msg_id = messageCounter++;
@@ -986,24 +1129,24 @@ void loop() {
   }
   #else
   // 接收端邏輯
-  // 檢查搖桿按鈕狀態變化，用於手動切換顯示頁面
-  if (dataReceived && (millis() - lastDataReceivedTime < dataTimeout)) {
-    bool buttonPressed = joystickData.button_state;
+  // 檢查搖桿按鈕狀態變化，用於手動切換顯示頁面 - 已移除，由Sender發送的事件觸發頁面切換
+  // if (dataReceived && (millis() - lastDataReceivedTime < dataTimeout)) {
+  //   bool buttonPressed = joystickData.button_state;
+  //
+  //   // 檢測按鈕狀態變化：從未按下到已按下
+  //   if (buttonPressed && !buttonPressedLast_receiver) {
+  //     // 切換顯示頁面
+  //     // displayPage = (displayPage + 1) % 2; // 已由sender發送的雙擊事件處理
+  //     // lastPageSwitchTime = millis(); // 重置自動切換計時器
+  //
+  //     // Serial.print("Display page changed to: ");
+  //     // Serial.println(displayPage);
+  //   }
+  //   buttonPressedLast_receiver = buttonPressed;
+  // }
 
-    // 檢測按鈕狀態變化：從未按下到已按下
-    if (buttonPressed && !buttonPressedLast) {
-      // 切換顯示頁面
-      displayPage = (displayPage + 1) % 2;
-      lastPageSwitchTime = millis(); // 重置自動切換計時器
-
-      Serial.print("Display page changed to: ");
-      Serial.println(displayPage);
-    }
-
-    buttonPressedLast = buttonPressed;
-  }
-
-  // 自動切換顯示頁面
+  // 自動切換顯示頁面 - 如果需要保留，可以取消註釋，但手動切換優先級更高
+  /*
   if (millis() - lastPageSwitchTime > pageSwitchInterval) {
     displayPage = (displayPage + 1) % 2;
     lastPageSwitchTime = millis();
@@ -1011,6 +1154,7 @@ void loop() {
     Serial.print("Auto-switching display page to: ");
     Serial.println(displayPage);
   }
+  */
 
   // 定期更新OLED顯示
   if (millis() - lastOLEDUpdateTime > oledUpdateInterval) {
