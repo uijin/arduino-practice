@@ -1,4 +1,7 @@
 *-backups/
+*.png
+*.jpg
+*.numbers
 libraries/
 .DS_Store
 fp-info-cache
