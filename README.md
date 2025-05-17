@@ -6,3 +6,21 @@
 
 
 
+## 示範專案
+
+以下是開發告一段落的實驗專案，當中的內容較為完整：
+- Solar_Tracker
+- Pixel_Campfire
+- Sunlight_Meter_V2
+- Sunlight_Meter_V1
+- Rangefinder_Ultrasonic
+
+還在進行中的專案：
+- Pixel_Show
+- Solar_Charger_V1
+- Solar_Tracker_ESP8266
+
+另外有些較簡單的 Chedker 專案，用來檢查電子模組運作正常與否。產生這類專案的代碼，對 2025 年 AI 模型而言輕而易舉，推測 AI 在網路上學了很多類似的專案。
+- WS2812B_LED_Checker
+- ESP32_WiFi_Checker
+- OLED_Display_Checker
