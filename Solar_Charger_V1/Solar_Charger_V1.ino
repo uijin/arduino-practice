@@ -7,6 +7,9 @@
 #include <math.h>
 #include <ESP32Servo.h>
 #include "config_secret.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
 
 //------------------------------------------------------------------------------
 // WiFi and VictoriaMetrics Settings
@@ -91,6 +94,11 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);  // OLED displa
 #define SOLAR_PANEL_CHANNEL 0
 #define BATTERY1_CHANNEL 1
 #define BATTERY2_CHANNEL 2
+
+// FreeRTOS handles
+TaskHandle_t displayTaskHandle = NULL;
+TaskHandle_t readChannelsTaskHandle = NULL;
+SemaphoreHandle_t i2cSemaphore = NULL;
 
 // Struct to hold measurements for each channel
 struct ChannelData {
@@ -490,12 +498,35 @@ int angleToPulseV(double angle) {
 }
 
 /**
+ * Display task function - continuously updates the display
+ */
+void displayTaskFunction(void *parameter) {
+  while (true) {
+    if (xSemaphoreTake(i2cSemaphore, pdMS_TO_TICKS(100)) == pdTRUE) {
+      displayMeasurements();
+      xSemaphoreGive(i2cSemaphore);
+    }
+    // Update display every 250ms
+    // Using vTaskDelay allows other tasks to run on single-core CPU
+    vTaskDelay(pdMS_TO_TICKS(250));
+  }
+}
+
+/**
  * Reads data from all INA3221 channels and stores in the global array
  */
-void readAllChannels() {
-  for (int channel = 0; channel < 3; channel++) {
-    channelData[channel].voltage = ina3221.getBusVoltage(channel);
-    channelData[channel].current = ina3221.getCurrentAmps(channel);
+void readChannelsTaskFunction(void *parameter) {
+  while (true) {
+    if (xSemaphoreTake(i2cSemaphore, pdMS_TO_TICKS(100)) == pdTRUE) {
+      for (int channel = 0; channel < 3; channel++) {
+        channelData[channel].voltage = ina3221.getBusVoltage(channel);
+        channelData[channel].current = ina3221.getCurrentAmps(channel);
+      }
+      xSemaphoreGive(i2cSemaphore);
+    }
+    // Read channels every 250ms
+    // Using vTaskDelay allows other tasks to run
+    vTaskDelay(pdMS_TO_TICKS(250));
   }
 }
 
@@ -647,11 +678,17 @@ void setup() {
 
   Serial.println("\n=== Initial Setup ===");
 
-  // Initialize sensors and display
-  if (!initializeINA3221())
-    while (1) delay(10);
-  if (!initializeDisplay())
-    while (1) delay(10);
+  // Create I2C semaphore before initializing I2C devices
+  i2cSemaphore = xSemaphoreCreateMutex();
+
+  // Initialize sensors and display with semaphore protection
+  if (xSemaphoreTake(i2cSemaphore, pdMS_TO_TICKS(100)) == pdTRUE) {
+    if (!initializeINA3221())
+      while (1) delay(10);
+    if (!initializeDisplay())
+      while (1) delay(10);
+    xSemaphoreGive(i2cSemaphore);
+  }
 
   // Initialize servo motors
   initServo();
@@ -703,8 +740,31 @@ void setup() {
   } else {
     Serial.println("\nWiFi connection failed, continuing without network");
   }
+
+  // Create display task (ESP32-C6 has single-core)
+  xTaskCreate(
+    displayTaskFunction,   // Function
+    "DisplayTask",         // Name
+    3072,                  // Stack size (bytes)
+    NULL,                  // Parameters
+    1,                     // Priority
+    &displayTaskHandle     // Handle
+  );
+
+  // Create sensor reading task
+  xTaskCreate(
+    readChannelsTaskFunction,   // Function
+    "ReadChannelsTask",         // Name
+    2048,                       // Stack size (bytes)
+    NULL,                       // Parameters
+    2,                          // Priority (higher than display task)
+    &readChannelsTaskHandle     // Handle
+  );
 }
 
+/**
+ * Main loop
+ */
 void loop() {
   unsigned long currentTime = millis();
   static unsigned long lastUpdateTime = 0;
@@ -753,11 +813,9 @@ void loop() {
     }
   }
 
-  // Read all channel data once per loop cycle
-  readAllChannels();
+  // Channel reading is now handled by readChannelsTaskFunction
 
-  // Update the display with current readings
-  displayMeasurements();
+  // Display is now updated by the display task, not here
 
   // Update solar tracker position at the specified interval
   if (currentTime - lastUpdateTime >= updateInterval) {
@@ -794,4 +852,7 @@ void loop() {
   delay(900);  // LED on time
   digitalWrite(LED_BUILTIN, LOW);
   delay(100);  // LED off time
+
+  // Small delay to allow other tasks to run
+  vTaskDelay(pdMS_TO_TICKS(10));
 }
