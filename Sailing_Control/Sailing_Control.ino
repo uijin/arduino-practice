@@ -27,12 +27,19 @@ U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 // 如果使用SPI連接，請用以下設置（調整引腳）:
 // U8G2_SSD1306_128X64_NONAME_F_4W_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* cs=*/ 10, /* dc=*/ 9, /* reset=*/ 8);
 
-// 定義旋轉編碼器的引腳
+// 定義第一個旋轉編碼器的引腳
 #define ROTARY_ENCODER_CLK_PIN D2     // 旋轉編碼器CLK連接到D2
 #define ROTARY_ENCODER_DT_PIN D1      // 旋轉編碼器DT連接到D1
 #define ROTARY_ENCODER_SW_PIN D0      // 旋轉編碼器SW連接到D0
 #define ROTARY_ENCODER_VCC_PIN -1    // 如果您使用自己的電源，設置為-1
 #define ROTARY_ENCODER_STEPS 4       // 旋轉步數配置，一般使用4
+
+// 定義第二個旋轉編碼器的引腳
+#define ROTARY_ENCODER2_CLK_PIN D8    // 第二個旋轉編碼器CLK連接到D8
+#define ROTARY_ENCODER2_DT_PIN D9     // 第二個旋轉編碼器DT連接到D9
+#define ROTARY_ENCODER2_SW_PIN D10    // 第二個旋轉編碼器SW連接到D10
+#define ROTARY_ENCODER2_VCC_PIN -1   // 如果您使用自己的電源，設置為-1
+#define ROTARY_ENCODER2_STEPS 4      // 旋轉步數配置，一般使用4
 
 AiEsp32RotaryEncoder rotaryEncoder = AiEsp32RotaryEncoder(
   ROTARY_ENCODER_CLK_PIN,
@@ -40,6 +47,14 @@ AiEsp32RotaryEncoder rotaryEncoder = AiEsp32RotaryEncoder(
   ROTARY_ENCODER_SW_PIN,
   ROTARY_ENCODER_VCC_PIN,
   ROTARY_ENCODER_STEPS
+);
+
+AiEsp32RotaryEncoder rotaryEncoder2 = AiEsp32RotaryEncoder(
+  ROTARY_ENCODER2_CLK_PIN,
+  ROTARY_ENCODER2_DT_PIN,
+  ROTARY_ENCODER2_SW_PIN,
+  ROTARY_ENCODER2_VCC_PIN,
+  ROTARY_ENCODER2_STEPS
 );
 
 // **重要** 在發送端模式，設置接收端的MAC地址（從接收端的Serial輸出獲取）
@@ -66,13 +81,15 @@ typedef enum {
 
 // 定義數據結構
 typedef struct joystick_message {
-  int x_value;         // X值
-  int y_value;         // Y值
-  int x_normalized;    // 正規化後的X值 (-100 到 100)
-  int y_normalized;    // 正規化後的Y值 (-100 到 100)
-  bool button_state;   // 按鈕當前物理狀態 (Pressed/Released)
-  uint32_t msg_id;     // 消息ID，用於追蹤
+  int encoder1_value;   // 第一個編碼器值
+  int encoder1_norm;    // 第一個編碼器正規化值 (-100 到 100)
+  int encoder2_value;   // 第二個編碼器值
+  int encoder2_norm;    // 第二個編碼器正規化值 (-100 到 100)
+  bool button_state;    // 第一個按鈕當前物理狀態 (Pressed/Released)
+  bool button2_state;   // 第二個按鈕當前物理狀態 (Pressed/Released)
+  uint32_t msg_id;      // 消息ID，用於追蹤
   uint8_t button_event; // 按鈕觸發的事件類型 (0:NO_EVENT, 1:SINGLE, 2:DOUBLE, 3:LONG)
+  uint8_t button2_event; // 第二個按鈕觸發的事件類型
 } joystick_message;
 
 // ACK封包結構體 - 用於發送確認和RSSI值
@@ -131,9 +148,12 @@ const unsigned long pageSwitchInterval = 5000; // 自動切換顯示頁面的間
 bool buttonPressedLast_receiver = false; // 用於接收端按鈕邏輯
 
 // 伺服馬達控制
-Servo steeringServo;              // 伺服馬達對象
-#define SERVO_PIN D0                    // 伺服馬達連接到D0
-int lastServoAngle = 90;               // 上次的伺服馬達角度
+Servo steeringServo;              // 第一個伺服馬達對象
+Servo steeringServo2;             // 第二個伺服馬達對象
+#define SERVO_PIN D0                    // 第一個伺服馬達連接到D0
+#define SERVO2_PIN D7                   // 第二個伺服馬達連接到D7
+int lastServoAngle = 90;               // 上次的第一個伺服馬達角度
+int lastServoAngle2 = 90;              // 上次的第二個伺服馬達角度
 #endif
 
 // ===== 兩者共用的變數 =====
@@ -326,19 +346,30 @@ bool sendESPNowData() {
 }
 
 // 控制伺服馬達角度
-void controlServo(int value) {
+void controlServos(int value1, int value2) {
   #ifdef DEVICE_ROLE_RECEIVER
   // 將編碼器值 (-100 到 100) 映射到伺服馬達角度 (0 到 180)
-  int servoAngle = map(value, -100, 100, 0, 180);
-
+  int servoAngle1 = map(value1, -100, 100, 0, 180);
+  int servoAngle2 = map(value2, -100, 100, 0, 180);
+  
   // 如果角度變化大於一定閾值才更新，避免抖動
-  if (abs(servoAngle - lastServoAngle) > 1) {
-    steeringServo.write(servoAngle);
-    lastServoAngle = servoAngle;
-
+  if (abs(servoAngle1 - lastServoAngle) > 1) {
+    steeringServo.write(servoAngle1);
+    lastServoAngle = servoAngle1;
+    
     // 調試輸出
-    Serial.print("Servo angle: ");
-    Serial.println(servoAngle);
+    Serial.print("Servo 1 angle: ");
+    Serial.println(servoAngle1);
+  }
+  
+  // 第二個伺服馬達控制
+  if (abs(servoAngle2 - lastServoAngle2) > 1) {
+    steeringServo2.write(servoAngle2);
+    lastServoAngle2 = servoAngle2;
+    
+    // 調試輸出
+    Serial.print("Servo 2 angle: ");
+    Serial.println(servoAngle2);
   }
   #endif
 }
@@ -394,7 +425,6 @@ void updateOLEDPage0() {
 }
 
 // 更新OLED頁面1（詳細信息）
-// 更新OLED顯示 - 第二頁：封包統計和搖桿數據
 void updateOLEDPage1() {
   #ifdef DEVICE_ROLE_RECEIVER
   u8g2.clearBuffer();
@@ -403,7 +433,7 @@ void updateOLEDPage1() {
   u8g2.setFont(u8g2_font_6x12_tr);
 
   // 標題
-  u8g2.drawStr(0, 10, "Joystick Info");
+  u8g2.drawStr(0, 10, "Encoder/Servo Info");
   u8g2.drawLine(0, 12, 128, 12);
 
   // 檢查是否有數據以及數據是否超時
@@ -415,17 +445,20 @@ void updateOLEDPage1() {
   // 顯示搖桿數據
   char buffer[40]; // Increased buffer size for longer strings
 
-  // 第1行: 編碼器值
-  sprintf(buffer, "Encoder: %d", joystickData.x_normalized);
+  // 第1行: 編碼器1值和伺服1角度
+  int servoAngle1 = map(joystickData.encoder1_norm, -100, 100, 0, 180);
+  sprintf(buffer, "Enc1:%d Srv1:%d°", joystickData.encoder1_norm, servoAngle1);
   u8g2.drawStr(0, 24, buffer);
 
-  // 第2行: 按鈕狀態
-  sprintf(buffer, "Button: %s", joystickData.button_state ? "Pressed" : "Released");
+  // 第2行: 編碼器2值和伺服2角度
+  int servoAngle2 = map(joystickData.encoder2_norm, -100, 100, 0, 180);
+  sprintf(buffer, "Enc2:%d Srv2:%d°", joystickData.encoder2_norm, servoAngle2);
   u8g2.drawStr(0, 36, buffer);
 
-  // 第3行: 伺服馬達角度
-  int servoAngle = map(joystickData.x_normalized, -100, 100, 0, 180);
-  sprintf(buffer, "Servo Angle: %d°", servoAngle);
+  // 第3行: 按鈕狀態
+  sprintf(buffer, "Btn1:%s Btn2:%s",
+          joystickData.button_state ? "ON" : "OFF",
+          joystickData.button2_state ? "ON" : "OFF");
   u8g2.drawStr(0, 48, buffer);
 
   // 第4行: 連接狀態
@@ -446,30 +479,29 @@ void updateSenderOLED() {
   u8g2.setFont(u8g2_font_6x12_tr);
 
   // 顯示標題
-  u8g2.drawStr(0, 10, "ESP-NOW Signal Strength");
+  u8g2.drawStr(0, 10, "Dual Encoder Control");
   u8g2.drawLine(0, 12, 128, 12);
 
   char buffer[32];
 
   // 顯示旋轉編碼器值
-  sprintf(buffer, "Encoder: %d", joystickData.x_normalized);
+  sprintf(buffer, "Enc1:%d Enc2:%d", 
+          joystickData.encoder1_norm, 
+          joystickData.encoder2_norm);
   u8g2.drawStr(0, 24, buffer);
 
   // 顯示最後發送狀態
   if (lastSendSuccess) {
-    u8g2.drawStr(80, 24, "Success");
+    u8g2.drawStr(0, 36, "Status: OK");
   } else {
-    u8g2.drawStr(80, 24, "Failed");
+    u8g2.drawStr(0, 36, "Status: Fail");
   }
 
-  // 顯示消息計數器
-  sprintf(buffer, "Msg Count: %lu", messageCounter);
-  u8g2.drawStr(0, 36, buffer);
-
-  // 顯示編碼器值
-  char encoderBuffer[32];
-  sprintf(encoderBuffer, "Encoder: %d", joystickData.x_normalized);
-  u8g2.drawStr(0, 48, encoderBuffer);
+  // 顯示按鈕狀態
+  sprintf(buffer, "Btn1:%s Btn2:%s",
+          joystickData.button_state ? "ON" : "OFF",
+          joystickData.button2_state ? "ON" : "OFF");
+  u8g2.drawStr(0, 48, buffer);
 
   // 檢查是否收到ACK (10秒內)
   unsigned long currentMillis = millis();
@@ -509,22 +541,31 @@ void IRAM_ATTR readEncoderISR() {
   rotaryEncoder.readEncoder_ISR();
 }
 
+// 第二個旋轉編碼器中斷處理函數
+void IRAM_ATTR readEncoder2ISR() {
+  rotaryEncoder2.readEncoder_ISR();
+}
+
 // 處理旋轉編碼器數據
-void handleRotaryEncoder() {
+void handleRotaryEncoders() {
   #ifdef DEVICE_ROLE_SENDER
-  // 讀取旋轉編碼器X值
-  int rawValue = rotaryEncoder.readEncoder();
-
-  // 計算正規化的X和Y值
-  // 我們使用X值來表示方向，Y值來表示速度
-  // 當X為正數時，Y為正數，表示向右轉
-  // 當X為負數時，Y為負數，表示向左轉
-  joystickData.x_value = rawValue;
-  joystickData.y_value = (rawValue != 0) ? (rawValue > 0 ? 100 : -100) : 0;
-
-  // 正規化值
-  joystickData.x_normalized = rawValue;
-  joystickData.y_normalized = joystickData.y_value;
+  // 讀取第一個旋轉編碼器
+  int rawValue1 = rotaryEncoder.readEncoder();
+  
+  // 設置第一個編碼器的值
+  joystickData.encoder1_value = rawValue1;
+  joystickData.encoder1_norm = rawValue1;
+  
+  // 讀取第二個旋轉編碼器
+  int rawValue2 = rotaryEncoder2.readEncoder();
+  
+  // 設置第二個編碼器的值
+  joystickData.encoder2_value = rawValue2;
+  joystickData.encoder2_norm = rawValue2;
+  
+  // 讀取按鈕狀態
+  joystickData.button_state = !rotaryEncoder.isEncoderButtonClicked();
+  joystickData.button2_state = !rotaryEncoder2.isEncoderButtonClicked();
   #endif
 }
 
@@ -539,6 +580,10 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int data_l
     Serial.println(receivedAck.ack_id);
     Serial.print("Receiver RSSI: ");
     Serial.println(receivedAck.rssi);
+    // 調試輸出RSSI值以便追蹤問題
+    Serial.print("RSSI Strength: ");
+    Serial.print(rssiToSignalStrength(receivedAck.rssi));
+    Serial.println("%");
 
     lastReceivedRSSI = receivedAck.rssi;
     ackReceived = true;
@@ -590,7 +635,7 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int data_l
     }
 
     // 控制伺服馬達
-    controlServo(joystickData.x_normalized);
+    controlServos(joystickData.encoder1_norm, joystickData.encoder2_norm);
 
     // 輸出接收到的數據
     Serial.print("Bytes received: ");
@@ -599,12 +644,14 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int data_l
     Serial.println(joystickData.msg_id);
 
     // 顯示接收的數據
-    Serial.print("Received data - X: ");
-    Serial.print(joystickData.x_normalized);
-    Serial.print(", Y: ");
-    Serial.print(joystickData.y_normalized);
-    Serial.print(", Button: ");
+    Serial.print("Received data - Encoder1: ");
+    Serial.print(joystickData.encoder1_norm);
+    Serial.print(", Encoder2: ");
+    Serial.print(joystickData.encoder2_norm);
+    Serial.print(", Button1: ");
     Serial.print(joystickData.button_state ? "Pressed" : "Released");
+    Serial.print(", Button2: ");
+    Serial.print(joystickData.button2_state ? "Pressed" : "Released");
     Serial.print(", Event: ");
     Serial.print(joystickData.button_event);
     Serial.print(", ID: ");
@@ -623,8 +670,8 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int data_l
       Serial.println(displayPage);
     }
 
-    // 發送ACK回應
-    ackData.rssi = WiFi.RSSI();
+    // 發送ACK回應 - 使用接收到的數據包的RSSI值
+    ackData.rssi = info->rx_ctrl->rssi;  // 使用數據包的RSSI而不是WiFi.RSSI()
     ackData.ack_id = joystickData.msg_id;
 
     // 嘗試添加對等點（如果尚未添加）
@@ -674,24 +721,36 @@ void setup() {
   #ifdef DEVICE_ROLE_SENDER
   Serial.println("\n\n=== ESP32 ESP-NOW - SENDER MODE with Rotary Encoder ===");
 
-  // 初始化旋轉編碼器
+  // 初始化第一個旋轉編碼器
   rotaryEncoder.begin();
   rotaryEncoder.setup(readEncoderISR);
   rotaryEncoder.setBoundaries(ROTARY_MIN_VALUE, ROTARY_MAX_VALUE, false); // 不循環
   rotaryEncoder.setAcceleration(250); // 設置加速度
-
-  // 將旋轉編碼器設置為初始值
   rotaryEncoder.setEncoderValue(ROTARY_INITIAL_VALUE);
+
+  // 初始化第二個旋轉編碼器
+  rotaryEncoder2.begin();
+  rotaryEncoder2.setup(readEncoder2ISR);
+  rotaryEncoder2.setBoundaries(ROTARY_MIN_VALUE, ROTARY_MAX_VALUE, false); // 不循環
+  rotaryEncoder2.setAcceleration(250); // 設置加速度
+  rotaryEncoder2.setEncoderValue(ROTARY_INITIAL_VALUE);
 
   #else
   Serial.println("\n\n=== ESP32 ESP-NOW - RECEIVER MODE with OLED and Servo ===");
 
-  // 初始化伺服馬達
+  // 初始化第一個伺服馬達
   steeringServo.setPeriodHertz(50);    // 標準50Hz伺服馬達
   steeringServo.attach(SERVO_PIN, 500, 2400); // 附加伺服馬達(引腳, 最小脈寬, 最大脈寬)
   steeringServo.write(90); // 初始位置居中
   lastServoAngle = 90;
-  Serial.println("Servo initialized at center position (90°)");
+
+  // 初始化第二個伺服馬達
+  steeringServo2.setPeriodHertz(50);   // 標準50Hz伺服馬達
+  steeringServo2.attach(SERVO2_PIN, 500, 2400); // 附加第二個伺服馬達
+  steeringServo2.write(90); // 初始位置居中
+  lastServoAngle2 = 90;
+
+  Serial.println("Both servos initialized at center position (90°)");
   #endif
 
   // 初始化OLED
@@ -814,11 +873,15 @@ void loop() {
 
   #ifdef DEVICE_ROLE_SENDER
   // 處理旋轉編碼器數據
-  handleRotaryEncoder();
+  handleRotaryEncoders();
 
-  // 處理按鈕事件
+  // 處理第一個編碼器的按鈕事件
   bool buttonPressed = !rotaryEncoder.isEncoderButtonClicked();
   joystickData.button_state = buttonPressed;
+
+  // 處理第二個編碼器的按鈕事件
+  bool button2Pressed = !rotaryEncoder2.isEncoderButtonClicked();
+  joystickData.button2_state = button2Pressed;
 
   if (buttonPressed != lastButtonState) {
     unsigned long currentTime = millis();
@@ -915,10 +978,12 @@ void loop() {
     Serial.println("Data reception timed out!");
     dataReceived = false;
 
-    // 數據超時時將伺服重置到中心位置
+    // 數據超時時將兩個伺服都重置到中心位置
     steeringServo.write(90);
+    steeringServo2.write(90);
     lastServoAngle = 90;
-    Serial.println("Timeout - Servo reset to center position");
+    lastServoAngle2 = 90;
+    Serial.println("Timeout - Both servos reset to center position");
   }
   #endif
 
