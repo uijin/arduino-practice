@@ -70,9 +70,7 @@ uint8_t receiverMacAddress[] = {0xD8, 0x3B, 0xDA, 0x74, 0x1C, 0xEC}; // 替換�
 // 定義按鈕事件類型
 typedef enum {
   NO_EVENT = 0,
-  SINGLE_CLICK,
-  DOUBLE_CLICK,
-  LONG_PRESS
+  SINGLE_CLICK
 } ButtonEventType;
 
 #define ESP_NOW_CHANNEL 1      // 設置ESP-NOW頻道 (1-14)，兩端必須相同
@@ -88,8 +86,8 @@ typedef struct joystick_message {
   bool button_state;    // 第一個按鈕當前物理狀態 (Pressed/Released)
   bool button2_state;   // 第二個按鈕當前物理狀態 (Pressed/Released)
   uint32_t msg_id;      // 消息ID，用於追蹤
-  uint8_t button_event; // 按鈕觸發的事件類型 (0:NO_EVENT, 1:SINGLE, 2:DOUBLE, 3:LONG)
-  uint8_t button2_event; // 第二個按鈕觸發的事件類型
+  uint8_t button_event; // 按鈕觸發的事件類型 (0:NO_EVENT, 1:SINGLE_CLICK)
+  uint8_t button2_event; // 第二個按鈕觸發的事件類型 (0:NO_EVENT, 1:SINGLE_CLICK)
 } joystick_message;
 
 // ACK封包結構體 - 用於發送確認和RSSI值
@@ -113,14 +111,8 @@ int retryCount = 0;           // 重試計數器
 bool lastSendSuccess = true;  // 上次發送是否成功
 
 // 按鈕事件檢測相關變量
-bool lastButtonState = false;         // 上一個按鈕狀態
-unsigned long buttonPressTime = 0;    // 按鈕按下的時間
-unsigned long buttonReleaseTime = 0;  // 按鈕釋放的時間
-int buttonClickCount = 0;             // 短時間內的點擊次數
-const unsigned long doubleClickGap = 250; // 雙擊的最大間隔 (毫秒)
-const unsigned long longPressDuration = 3000; // 長按的持續時間 (毫秒)
-bool longPressActive = false;         // 長按是否已觸發並處理
 ButtonEventType currentButtonEvent = NO_EVENT; // 當前檢測到的按鈕事件
+ButtonEventType currentButton2Event = NO_EVENT; // 第二個按鈕事件
 #endif
 
 #ifdef DEVICE_ROLE_RECEIVER
@@ -564,9 +556,9 @@ void handleRotaryEncoders() {
   joystickData.encoder2_value = rawValue2;
   joystickData.encoder2_norm = rawValue2;
   
-  // 讀取按鈕狀態
-  joystickData.button_state = !rotaryEncoder.isEncoderButtonClicked();
-  joystickData.button2_state = !rotaryEncoder2.isEncoderButtonClicked();
+  // 讀取當前按鈕狀態
+  joystickData.button_state = rotaryEncoder.isEncoderButtonDown();
+  joystickData.button2_state = rotaryEncoder2.isEncoderButtonDown();
   #endif
 }
 
@@ -660,16 +652,17 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int data_l
 
     // 處理按鈕事件
     ButtonEventType receivedEvent = (ButtonEventType)joystickData.button_event;
+    ButtonEventType receivedEvent2 = (ButtonEventType)joystickData.button2_event;
     if (receivedEvent != NO_EVENT) {
-      Serial.print("Received Button Event: ");
+      Serial.print("Received Button1 Event: ");
       Serial.println(receivedEvent);
     }
-
-    if (receivedEvent == DOUBLE_CLICK) {
-      displayPage = (displayPage + 1) % 2; // 切換顯示頁面
-      Serial.print("Receiver: OLED Page switched to ");
-      Serial.println(displayPage);
+    if (receivedEvent2 != NO_EVENT) {
+      Serial.print("Received Button2 Event: ");
+      Serial.println(receivedEvent2);
     }
+
+
 
     // 發送ACK回應 - 使用接收到的數據包的RSSI值
     ackData.rssi = info->rx_ctrl->rssi;  // 使用數據包的RSSI而不是WiFi.RSSI()
@@ -876,72 +869,20 @@ void loop() {
   // 處理旋轉編碼器數據
   handleRotaryEncoders();
 
-  // 處理第一個編碼器的按鈕事件
-  bool buttonPressed = !rotaryEncoder.isEncoderButtonClicked();
-  joystickData.button_state = buttonPressed;
-
-  // 處理第二個編碼器的按鈕事件
-  bool button2Pressed = !rotaryEncoder2.isEncoderButtonClicked();
-  joystickData.button2_state = button2Pressed;
-
-  if (buttonPressed != lastButtonState) {
-    unsigned long currentTime = millis();
-
-    if (buttonPressed) {
-      // 按鈕按下
-      buttonPressTime = currentTime;
-      buttonClickCount++;
-      longPressActive = false;
-    } else {
-      // 按鈕釋放
-      buttonReleaseTime = currentTime;
-    }
-
-    lastButtonState = buttonPressed;
+  // 檢測按鈕點擊事件（庫已處理debounce和完整點擊檢測）
+  if (rotaryEncoder.isEncoderButtonClicked()) {
+    currentButtonEvent = SINGLE_CLICK;
+    Serial.println("Button1 Event: SINGLE_CLICK");
   }
 
-  // 檢測點擊類型
-  unsigned long currentTime = millis();
-
-  // 檢測雙擊和單擊
-  if (buttonClickCount > 0 && !lastButtonState && (currentTime - buttonReleaseTime > doubleClickGap)) {
-    if (buttonClickCount == 1) {
-      currentButtonEvent = SINGLE_CLICK;
-      Serial.println("Button Event: SINGLE_CLICK");
-    } else if (buttonClickCount >= 2) {
-      currentButtonEvent = DOUBLE_CLICK;
-      Serial.println("Button Event: DOUBLE_CLICK");
-    }
-    buttonClickCount = 0;
-  }
-
-  // 檢測長按
-  if (lastButtonState && !longPressActive && (currentTime - buttonPressTime >= longPressDuration)) {
-    currentButtonEvent = LONG_PRESS;
-    Serial.println("Button Event: LONG_PRESS");
-    longPressActive = true;
-    buttonClickCount = 0;
-
-    // 長按重置旋轉編碼器
-    rotaryEncoder.setEncoderValue(ROTARY_INITIAL_VALUE);
-    Serial.println("Reset rotary encoder to center position");
-
-    // Display calibration success on sender's OLED
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_ncenB10_tr); // Use a slightly larger font
-    u8g2.drawStr(0, 10, "Encoder Reset!");
-    u8g2.drawStr(0, 25, "Position: 0");
-    u8g2.sendBuffer();
-    delay(1000); // Short display time
-  }
-
-  // 如果按鈕釋放並且之前是長按，重置長按狀態
-  if (!lastButtonState && longPressActive) {
-    longPressActive = false;
+  if (rotaryEncoder2.isEncoderButtonClicked()) {
+    currentButton2Event = SINGLE_CLICK;
+    Serial.println("Button2 Event: SINGLE_CLICK");
   }
 
   // 更新按鈕事件
   joystickData.button_event = (uint8_t)currentButtonEvent;
+  joystickData.button2_event = (uint8_t)currentButton2Event;
 
   // 更新OLED顯示
   if (millis() - lastOLEDUpdateTime > 100) {
@@ -963,6 +904,10 @@ void loop() {
 
     // 發送數據
     sendESPNowData();
+
+    // 重置按鈕事件狀態，避免重複發送
+    currentButtonEvent = NO_EVENT;
+    currentButton2Event = NO_EVENT;
 
     lastDataSentTime = millis();
   }
