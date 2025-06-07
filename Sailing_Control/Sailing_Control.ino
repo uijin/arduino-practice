@@ -9,8 +9,8 @@
 
 // ===== 重要：在這裡選擇設備角色 =====
 // 取消註釋其中一個，並註釋另一個
-// #define DEVICE_ROLE_SENDER     // 取消此行註釋使設備成為發送端
-#define DEVICE_ROLE_RECEIVER // 取消此行註釋使設備成為接收端
+#define DEVICE_ROLE_SENDER     // 取消此行註釋使設備成為發送端
+// #define DEVICE_ROLE_RECEIVER // 取消此行註釋使設備成為接收端
 
 // 檢查是否正確定義了角色
 #if defined(DEVICE_ROLE_SENDER) && defined(DEVICE_ROLE_RECEIVER)
@@ -28,18 +28,18 @@ U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 // U8G2_SSD1306_128X64_NONAME_F_4W_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* cs=*/ 10, /* dc=*/ 9, /* reset=*/ 8);
 
 // 定義第一個旋轉編碼器的引腳
-#define ROTARY_ENCODER_CLK_PIN D2     // 旋轉編碼器CLK連接到D2
-#define ROTARY_ENCODER_DT_PIN D1      // 旋轉編碼器DT連接到D1
-#define ROTARY_ENCODER_SW_PIN D0      // 旋轉編碼器SW連接到D0
+#define ROTARY_ENCODER_CLK_PIN D8     // 旋轉編碼器CLK連接到D2
+#define ROTARY_ENCODER_DT_PIN D9      // 旋轉編碼器DT連接到D1
+#define ROTARY_ENCODER_SW_PIN D10      // 旋轉編碼器SW連接到D0
 #define ROTARY_ENCODER_VCC_PIN -1    // 如果您使用自己的電源，設置為-1
-#define ROTARY_ENCODER_STEPS 4       // 旋轉步數配置，一般使用4
+#define ROTARY_ENCODER_STEPS 2       // 旋轉步數配置，一般使用4
 
 // 定義第二個旋轉編碼器的引腳
-#define ROTARY_ENCODER2_CLK_PIN D8    // 第二個旋轉編碼器CLK連接到D8
-#define ROTARY_ENCODER2_DT_PIN D9     // 第二個旋轉編碼器DT連接到D9
-#define ROTARY_ENCODER2_SW_PIN D10    // 第二個旋轉編碼器SW連接到D10
+#define ROTARY_ENCODER2_CLK_PIN D0    // 第二個旋轉編碼器CLK連接到D8
+#define ROTARY_ENCODER2_DT_PIN D1     // 第二個旋轉編碼器DT連接到D9
+#define ROTARY_ENCODER2_SW_PIN D2    // 第二個旋轉編碼器SW連接到D10
 #define ROTARY_ENCODER2_VCC_PIN -1   // 如果您使用自己的電源，設置為-1
-#define ROTARY_ENCODER2_STEPS 4      // 旋轉步數配置，一般使用4
+#define ROTARY_ENCODER2_STEPS 2      // 旋轉步數配置，一般使用4
 
 AiEsp32RotaryEncoder rotaryEncoder = AiEsp32RotaryEncoder(
   ROTARY_ENCODER_CLK_PIN,
@@ -63,8 +63,8 @@ AiEsp32RotaryEncoder rotaryEncoder2 = AiEsp32RotaryEncoder(
 uint8_t receiverMacAddress[] = {0xD8, 0x3B, 0xDA, 0x74, 0x1C, 0xEC}; // 替換為接收端的實際MAC地址
 
 // 旋轉編碼器範圍設定
-#define ROTARY_MIN_VALUE -100
-#define ROTARY_MAX_VALUE 100
+#define ROTARY_MIN_VALUE -90
+#define ROTARY_MAX_VALUE 90
 #define ROTARY_INITIAL_VALUE 0
 
 // 定義按鈕事件類型
@@ -82,9 +82,9 @@ typedef enum {
 // 定義數據結構
 typedef struct joystick_message {
   int encoder1_value;   // 第一個編碼器值
-  int encoder1_norm;    // 第一個編碼器正規化值 (-100 到 100)
+  int encoder1_norm;    // 第一個編碼器正規化值 (-200 到 200)
   int encoder2_value;   // 第二個編碼器值
-  int encoder2_norm;    // 第二個編碼器正規化值 (-100 到 100)
+  int encoder2_norm;    // 第二個編碼器正規化值 (-200 到 200)
   bool button_state;    // 第一個按鈕當前物理狀態 (Pressed/Released)
   bool button2_state;   // 第二個按鈕當前物理狀態 (Pressed/Released)
   uint32_t msg_id;      // 消息ID，用於追蹤
@@ -349,8 +349,9 @@ bool sendESPNowData() {
 void controlServos(int value1, int value2) {
   #ifdef DEVICE_ROLE_RECEIVER
   // 將編碼器值 (-100 到 100) 映射到伺服馬達角度 (0 到 180)
-  int servoAngle1 = map(value1, -100, 100, 0, 180);
-  int servoAngle2 = map(value2, -100, 100, 0, 180);
+  int servoAngle1 = map(value1, ROTARY_MIN_VALUE, ROTARY_MAX_VALUE, 0, 180);
+  int servoAngle2 = map(value2, ROTARY_MIN_VALUE, ROTARY_MAX_VALUE, 0, 180);
+  servoAngle2 = 180 - servoAngle2; // 因為上下顛倒安裝，所以轉動方向相反。
   
   // 如果角度變化大於一定閾值才更新，避免抖動
   if (abs(servoAngle1 - lastServoAngle) > 1) {
@@ -446,12 +447,12 @@ void updateOLEDPage1() {
   char buffer[40]; // Increased buffer size for longer strings
 
   // 第1行: 編碼器1值和伺服1角度
-  int servoAngle1 = map(joystickData.encoder1_norm, -100, 100, 0, 180);
+  int servoAngle1 = map(joystickData.encoder1_norm, ROTARY_MIN_VALUE, ROTARY_MAX_VALUE, 0, 180);
   sprintf(buffer, "Enc1:%d Srv1:%d°", joystickData.encoder1_norm, servoAngle1);
   u8g2.drawStr(0, 24, buffer);
 
   // 第2行: 編碼器2值和伺服2角度
-  int servoAngle2 = map(joystickData.encoder2_norm, -100, 100, 0, 180);
+  int servoAngle2 = map(joystickData.encoder2_norm, ROTARY_MIN_VALUE, ROTARY_MAX_VALUE, 0, 180);
   sprintf(buffer, "Enc2:%d Srv2:%d°", joystickData.encoder2_norm, servoAngle2);
   u8g2.drawStr(0, 36, buffer);
 
@@ -725,14 +726,14 @@ void setup() {
   rotaryEncoder.begin();
   rotaryEncoder.setup(readEncoderISR);
   rotaryEncoder.setBoundaries(ROTARY_MIN_VALUE, ROTARY_MAX_VALUE, false); // 不循環
-  rotaryEncoder.setAcceleration(250); // 設置加速度
+  rotaryEncoder.setAcceleration(50); // 設置加速度
   rotaryEncoder.setEncoderValue(ROTARY_INITIAL_VALUE);
 
   // 初始化第二個旋轉編碼器
   rotaryEncoder2.begin();
   rotaryEncoder2.setup(readEncoder2ISR);
   rotaryEncoder2.setBoundaries(ROTARY_MIN_VALUE, ROTARY_MAX_VALUE, false); // 不循環
-  rotaryEncoder2.setAcceleration(250); // 設置加速度
+  rotaryEncoder2.setAcceleration(50); // 設置加速度
   rotaryEncoder2.setEncoderValue(ROTARY_INITIAL_VALUE);
 
   #else
@@ -740,13 +741,13 @@ void setup() {
 
   // 初始化第一個伺服馬達
   steeringServo.setPeriodHertz(50);    // 標準50Hz伺服馬達
-  steeringServo.attach(SERVO_PIN, 500, 2400); // 附加伺服馬達(引腳, 最小脈寬, 最大脈寬)
+  steeringServo.attach(SERVO_PIN, 500, 2500); // 附加伺服馬達(引腳, 最小脈寬, 最大脈寬)
   steeringServo.write(90); // 初始位置居中
   lastServoAngle = 90;
 
   // 初始化第二個伺服馬達
   steeringServo2.setPeriodHertz(50);   // 標準50Hz伺服馬達
-  steeringServo2.attach(SERVO2_PIN, 500, 2400); // 附加第二個伺服馬達
+  steeringServo2.attach(SERVO2_PIN, 500, 2500); // 附加第二個伺服馬達
   steeringServo2.write(90); // 初始位置居中
   lastServoAngle2 = 90;
 
