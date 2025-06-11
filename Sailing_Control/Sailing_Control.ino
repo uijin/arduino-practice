@@ -35,9 +35,9 @@ U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 #define ROTARY_ENCODER_STEPS 2       // 旋轉步數配置，一般使用4
 
 // 定義第二個旋轉編碼器的引腳
-#define ROTARY_ENCODER2_CLK_PIN D0    // 第二個旋轉編碼器CLK連接到D8
+#define ROTARY_ENCODER2_CLK_PIN D2    // 第二個旋轉編碼器CLK連接到D8
 #define ROTARY_ENCODER2_DT_PIN D1     // 第二個旋轉編碼器DT連接到D9
-#define ROTARY_ENCODER2_SW_PIN D2    // 第二個旋轉編碼器SW連接到D10
+#define ROTARY_ENCODER2_SW_PIN D0    // 第二個旋轉編碼器SW連接到D10
 #define ROTARY_ENCODER2_VCC_PIN -1   // 如果您使用自己的電源，設置為-1
 #define ROTARY_ENCODER2_STEPS 2      // 旋轉步數配置，一般使用4
 
