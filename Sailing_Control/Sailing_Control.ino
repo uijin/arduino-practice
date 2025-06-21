@@ -57,10 +57,20 @@ AiEsp32RotaryEncoder rotaryEncoder2 = AiEsp32RotaryEncoder(
   ROTARY_ENCODER2_STEPS
 );
 
-// **重要** 在發送端模式，設置接收端的MAC地址（從接收端的Serial輸出獲取）
-// 示例格式: {0x24, 0x0A, 0xC4, 0x9A, 0x58, 0x28}
-// uint8_t receiverMacAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; // 替換為接收端的實際MAC地址
-uint8_t receiverMacAddress[] = {0xD8, 0x3B, 0xDA, 0x74, 0x1C, 0xEC}; // 替換為接收端的實際MAC地址
+// **重要** 多接收端配置
+#define NUM_RECEIVERS 2
+uint8_t receiverMacAddresses[NUM_RECEIVERS][6] = {
+  {0xD8, 0x3B, 0xDA, 0x74, 0x1C, 0xEC}, // Sailing Car
+  {0xFC, 0xF5, 0xC4, 0x95, 0x97, 0x6C}  // Motor Car
+};
+
+const char* receiverNames[NUM_RECEIVERS] = {
+  "Sailing Car",
+  "Motor Car"
+};
+
+// 當前選擇的接收端
+int currentReceiver = 0;  // 默認選擇第一個接收端
 
 // 旋轉編碼器範圍設定
 #define ROTARY_MIN_VALUE -90
@@ -103,12 +113,20 @@ ack_message ackData;          // ACK封包數據結構
 // Sender端的特定變數
 #ifdef DEVICE_ROLE_SENDER
 uint32_t messageCounter = 0;  // 消息計數器
-ack_message receivedAck;      // 接收到的ACK封包
-int lastReceivedRSSI = -100;  // 上次接收到的RSSI值
-bool ackReceived = false;     // 是否收到ACK
-unsigned long lastAckTime = 0; // 上次接收ACK的時間
+
+// 每個接收端的獨立連接狀態
+ack_message receivedAck[NUM_RECEIVERS];      // 每個接收端的ACK封包
+int lastReceivedRSSI[NUM_RECEIVERS];         // 每個接收端的RSSI值
+bool ackReceived[NUM_RECEIVERS];             // 每個接收端的ACK狀態
+unsigned long lastAckTime[NUM_RECEIVERS];    // 每個接收端的上次ACK時間
+
 int retryCount = 0;           // 重試計數器
 bool lastSendSuccess = true;  // 上次發送是否成功
+
+// 接收端切換相關變量
+bool receiverSwitchMode = false;       // 是否處於接收端切換模式
+unsigned long switchModeStartTime = 0; // 切換模式開始時間
+#define SWITCH_MODE_TIMEOUT 3000       // 切換模式超時時間 (3秒)
 
 // 按鈕事件檢測相關變量
 ButtonEventType currentButtonEvent = NO_EVENT; // 當前檢測到的按鈕事件
@@ -219,11 +237,11 @@ bool reinitESPNow() {
   esp_now_register_send_cb(OnDataSent);
   #endif
 
-  // 重新添加對等點
+  // 重新添加當前接收端作為對等點
   #ifdef DEVICE_ROLE_SENDER
-  // 添加接收端作為對等點
+  // 添加當前選擇的接收端作為對等點
   memset(&peerInfo, 0, sizeof(peerInfo));
-  memcpy(peerInfo.peer_addr, receiverMacAddress, 6);
+  memcpy(peerInfo.peer_addr, receiverMacAddresses[currentReceiver], 6);
   peerInfo.channel = ESP_NOW_CHANNEL;
   peerInfo.encrypt = ESP_NOW_ENCRYPT;
   esp_err_t addStatus = esp_now_add_peer(&peerInfo);
@@ -235,6 +253,60 @@ bool reinitESPNow() {
   #endif
 
   return true;
+}
+
+// 切換接收端函數
+bool switchReceiver(int newReceiver) {
+  #ifdef DEVICE_ROLE_SENDER
+  if (newReceiver < 0 || newReceiver >= NUM_RECEIVERS) {
+    Serial.println("Invalid receiver index");
+    return false;
+  }
+  
+  if (newReceiver == currentReceiver) {
+    Serial.println("Already using this receiver");
+    return true;
+  }
+  
+  // 移除當前對等點
+  esp_err_t removeStatus = esp_now_del_peer(receiverMacAddresses[currentReceiver]);
+  if (removeStatus != ESP_OK) {
+    Serial.print("Failed to remove current peer: ");
+    Serial.println(getESPErrorMsg(removeStatus));
+  }
+  
+  // 添加新的對等點
+  memset(&peerInfo, 0, sizeof(peerInfo));
+  memcpy(peerInfo.peer_addr, receiverMacAddresses[newReceiver], 6);
+  peerInfo.channel = ESP_NOW_CHANNEL;
+  peerInfo.encrypt = ESP_NOW_ENCRYPT;
+  
+  esp_err_t addStatus = esp_now_add_peer(&peerInfo);
+  if (addStatus != ESP_OK) {
+    Serial.print("Failed to add new peer: ");
+    Serial.println(getESPErrorMsg(addStatus));
+    Serial.print("Staying on current receiver: ");
+    Serial.println(receiverNames[currentReceiver]);
+    
+    // 重新添加原來的對等點
+    memcpy(peerInfo.peer_addr, receiverMacAddresses[currentReceiver], 6);
+    esp_now_add_peer(&peerInfo);
+    return false;
+  }
+  
+  // 成功切換
+  currentReceiver = newReceiver;
+  Serial.print("Switched to receiver: ");
+  Serial.println(receiverNames[currentReceiver]);
+  
+  // 重置新接收端的連接狀態
+  ackReceived[currentReceiver] = false;
+  lastAckTime[currentReceiver] = 0;
+  lastReceivedRSSI[currentReceiver] = -100;
+  
+  return true;
+  #endif
+  return false;
 }
 
 // 將RSSI轉換為信號強度級別(0-4)
@@ -302,7 +374,7 @@ bool sendESPNowData() {
     Serial.println("Retrying send...");
   }
 
-  esp_err_t result = esp_now_send(receiverMacAddress, (uint8_t *)&rotaryData, sizeof(rotaryData));
+  esp_err_t result = esp_now_send(receiverMacAddresses[currentReceiver], (uint8_t *)&rotaryData, sizeof(rotaryData));
 
   if (result != ESP_OK) {
     Serial.print("Send Error: ");
@@ -442,16 +514,68 @@ void updateOLEDPage1() {
   #endif
 }
 
+// 接收端切換顯示函數
+void updateReceiverSwitchOLED() {
+  #ifdef DEVICE_ROLE_SENDER
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_6x12_tr);
+  
+  // 標題
+  u8g2.drawStr(0, 10, "Select Receiver:");
+  u8g2.drawLine(0, 12, 128, 12);
+  
+  char buffer[32];
+  
+  // 顯示接收端列表
+  for (int i = 0; i < NUM_RECEIVERS; i++) {
+    int yPos = 26 + (i * 12);
+    
+    // 當前選中的接收端用箭頭標示
+    if (i == currentReceiver) {
+      u8g2.drawStr(0, yPos, ">");
+    }
+    
+    // 接收端名稱
+    u8g2.drawStr(10, yPos, receiverNames[i]);
+    
+    // 連接狀態指示
+    unsigned long currentMillis = millis();
+    if (ackReceived[i] && (currentMillis - lastAckTime[i] < 10000)) {
+      sprintf(buffer, "OK(%d)", rssiToSignalStrength(lastReceivedRSSI[i]));
+      u8g2.drawStr(80, yPos, buffer);
+    } else {
+      u8g2.drawStr(80, yPos, "---");
+    }
+  }
+  
+  // 顯示剩餘時間
+  unsigned long remainingTime = SWITCH_MODE_TIMEOUT - (millis() - switchModeStartTime);
+  sprintf(buffer, "Auto exit: %lus", remainingTime / 1000);
+  u8g2.drawStr(0, 60, buffer);
+  
+  u8g2.sendBuffer();
+  #endif
+}
+
 // 發送端OLED顯示函數 - 顯示ESP-NOW訊號強度
 void updateSenderOLED() {
   #ifdef DEVICE_ROLE_SENDER
+  
+  // 如果處於接收端切換模式，顯示切換界面
+  if (receiverSwitchMode) {
+    updateReceiverSwitchOLED();
+    return;
+  }
+  
   u8g2.clearBuffer();
 
   // 設置字體
   u8g2.setFont(u8g2_font_6x12_tr);
 
-  // 顯示標題
-  u8g2.drawStr(0, 10, "Dual Encoder Control");
+  // 顯示標題和當前接收端
+  char titleBuffer[32];
+  sprintf(titleBuffer, "Control->%s", receiverNames[currentReceiver]);
+  u8g2.drawStr(0, 10, titleBuffer);
   u8g2.drawLine(0, 12, 128, 12);
 
   char buffer[32];
@@ -475,12 +599,12 @@ void updateSenderOLED() {
           rotaryData.button2_state ? "ON" : "OFF");
   u8g2.drawStr(0, 48, buffer);
 
-  // 檢查是否收到ACK (10秒內)
+  // 檢查當前接收端的ACK狀態 (10秒內)
   unsigned long currentMillis = millis();
-  if (ackReceived && (currentMillis - lastAckTime < 10000)) {
+  if (ackReceived[currentReceiver] && (currentMillis - lastAckTime[currentReceiver] < 10000)) {
     // 顯示RSSI信息
-    int signalStrength = rssiToSignalStrength(lastReceivedRSSI);
-    sprintf(buffer, "RSSI: %d dBm (%d%%)", lastReceivedRSSI, signalStrength);
+    int signalStrength = rssiToSignalStrength(lastReceivedRSSI[currentReceiver]);
+    sprintf(buffer, "RSSI: %d dBm (%d%%)", lastReceivedRSSI[currentReceiver], signalStrength);
     u8g2.drawStr(0, 60, buffer);
 
   } else {
@@ -545,19 +669,37 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int data_l
   // 發送端處理接收到的ACK數據
   const uint8_t *mac_addr = info->src_addr;
   if (data_len == sizeof(ack_message)) {
-    memcpy(&receivedAck, data, sizeof(ack_message));
-    Serial.print("Received ACK for message ID: ");
-    Serial.println(receivedAck.ack_id);
-    Serial.print("Receiver RSSI: ");
-    Serial.println(receivedAck.rssi);
-    // 調試輸出RSSI值以便追蹤問題
-    Serial.print("RSSI Strength: ");
-    Serial.print(rssiToSignalStrength(receivedAck.rssi));
-    Serial.println("%");
-
-    lastReceivedRSSI = receivedAck.rssi;
-    ackReceived = true;
-    lastAckTime = millis();
+    ack_message tempAck;
+    memcpy(&tempAck, data, sizeof(ack_message));
+    
+    // 找到對應的接收端
+    int receiverIndex = -1;
+    for (int i = 0; i < NUM_RECEIVERS; i++) {
+      if (memcmp(mac_addr, receiverMacAddresses[i], 6) == 0) {
+        receiverIndex = i;
+        break;
+      }
+    }
+    
+    if (receiverIndex >= 0) {
+      // 更新對應接收端的狀態
+      memcpy(&receivedAck[receiverIndex], &tempAck, sizeof(ack_message));
+      lastReceivedRSSI[receiverIndex] = tempAck.rssi;
+      ackReceived[receiverIndex] = true;
+      lastAckTime[receiverIndex] = millis();
+      
+      Serial.print("Received ACK from ");
+      Serial.print(receiverNames[receiverIndex]);
+      Serial.print(" for message ID: ");
+      Serial.println(tempAck.ack_id);
+      Serial.print("RSSI: ");
+      Serial.print(tempAck.rssi);
+      Serial.print(" dBm (");
+      Serial.print(rssiToSignalStrength(tempAck.rssi));
+      Serial.println("%)");
+    } else {
+      Serial.println("Received ACK from unknown receiver");
+    }
   } else {
     Serial.print("Received unknown data of size: ");
     Serial.println(data_len);
@@ -802,9 +944,9 @@ void setup() {
   esp_now_register_send_cb(OnDataSent);
   esp_now_register_recv_cb(OnDataRecv);
 
-  // 添加接收端作為對等點
+  // 添加默認接收端作為對等點
   memset(&peerInfo, 0, sizeof(peerInfo));
-  memcpy(peerInfo.peer_addr, receiverMacAddress, 6);
+  memcpy(peerInfo.peer_addr, receiverMacAddresses[currentReceiver], 6);
   peerInfo.channel = ESP_NOW_CHANNEL;
   peerInfo.encrypt = ESP_NOW_ENCRYPT;
   esp_err_t addStatus = esp_now_add_peer(&peerInfo);
@@ -813,7 +955,15 @@ void setup() {
     Serial.print("添加對等點失敗: ");
     Serial.println(getESPErrorMsg(addStatus));
   } else {
-    Serial.println("對等點添加成功");
+    Serial.print("對等點添加成功: ");
+    Serial.println(receiverNames[currentReceiver]);
+  }
+  
+  // 初始化所有接收端的連接狀態
+  for (int i = 0; i < NUM_RECEIVERS; i++) {
+    ackReceived[i] = false;
+    lastAckTime[i] = 0;
+    lastReceivedRSSI[i] = -100;
   }
 
   #else
@@ -849,13 +999,31 @@ void loop() {
 
   // 檢測按鈕點擊事件（庫已處理debounce和完整點擊檢測）
   if (rotaryEncoder.isEncoderButtonClicked()) {
+    // 處理接收端切換邏輯
+    if (receiverSwitchMode) {
+      // 在切換模式中，切換到下一個接收端
+      int nextReceiver = (currentReceiver + 1) % NUM_RECEIVERS;
+      if (switchReceiver(nextReceiver)) {
+        receiverSwitchMode = false; // 切換成功，退出切換模式
+      }
+    } else {
+      // 進入接收端切換模式
+      receiverSwitchMode = true;
+      switchModeStartTime = millis();
+      Serial.println("Entering receiver switch mode");
+    }
     currentButtonEvent = SINGLE_CLICK;
-    Serial.println("Button1 Event: SINGLE_CLICK");
   }
 
   if (rotaryEncoder2.isEncoderButtonClicked()) {
     currentButton2Event = SINGLE_CLICK;
     Serial.println("Button2 Event: SINGLE_CLICK");
+  }
+  
+  // 處理接收端切換模式超時
+  if (receiverSwitchMode && (millis() - switchModeStartTime > SWITCH_MODE_TIMEOUT)) {
+    receiverSwitchMode = false;
+    Serial.println("Receiver switch mode timeout, returning to normal mode");
   }
 
   // 更新按鈕事件
@@ -867,11 +1035,13 @@ void loop() {
     updateSenderOLED();
     lastOLEDUpdateTime = millis();
 
-    // 檢查是否長時間未收到ACK
-    if (ackReceived && (millis() - lastAckTime > 30000)) {
-      Serial.println("No ACK received for a long time, re-initializing ESP-NOW");
+    // 檢查當前接收端是否長時間未收到ACK
+    if (ackReceived[currentReceiver] && (millis() - lastAckTime[currentReceiver] > 30000)) {
+      Serial.print("No ACK received from ");
+      Serial.print(receiverNames[currentReceiver]);
+      Serial.println(" for a long time, re-initializing ESP-NOW");
       reinitESPNow();
-      ackReceived = false;
+      ackReceived[currentReceiver] = false;
     }
   }
 
