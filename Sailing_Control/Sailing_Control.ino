@@ -23,7 +23,8 @@
 // 使用 U8g2lib 創建顯示對象
 // 請根據您的連接方式選擇正確的構造函數
 // 下面是基於I2C連接的設置，如果您使用SPI請調整構造函數
-U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
+// U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
+U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);  // OLED display
 // 如果使用SPI連接，請用以下設置（調整引腳）:
 // U8G2_SSD1306_128X64_NONAME_F_4W_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* cs=*/ 10, /* dc=*/ 9, /* reset=*/ 8);
 
