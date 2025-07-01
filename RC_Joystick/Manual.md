@@ -52,13 +52,13 @@ SW (Button)    →   D2
 - **Deadband**: Small neutral zone around center prevents drift
 
 ### LED Status Indicators
-| LED Pattern | Meaning |
-|-------------|---------|
-| Solid (slow blink) | Normal operation |
-| Fast blink | Calibration mode |
-| Medium blink | Communication errors |
-| Very fast blink | System error |
-| Off | Startup or critical failure |
+| LED Pattern | Meaning | Blinking Period |
+|-------------|---------|-----------------|
+| Solid (slow blink) | Normal operation | 1000ms |
+| Fast blink | Calibration mode | 200ms |
+| Medium blink | Message send failure | 300ms |
+| Very fast blink | System error | 100ms |
+| Off | Startup or critical failure | N/A |
 
 ## Control Examples
 
