@@ -9,8 +9,8 @@
 
 // ===== 重要：在這裡選擇設備角色 =====
 // 取消註釋其中一個，並註釋另一個
-#define DEVICE_ROLE_SENDER     // 取消此行註釋使設備成為發送端
-// #define DEVICE_ROLE_RECEIVER // 取消此行註釋使設備成為接收端
+// #define DEVICE_ROLE_SENDER     // 取消此行註釋使設備成為發送端
+#define DEVICE_ROLE_RECEIVER // 取消此行註釋使設備成為接收端
 
 // 檢查是否正確定義了角色
 #if defined(DEVICE_ROLE_SENDER) && defined(DEVICE_ROLE_RECEIVER)
@@ -99,6 +99,7 @@ typedef struct rotary_message {
   uint32_t msg_id;      // 消息ID，用於追蹤
   uint8_t button_event; // 按鈕觸發的事件類型 (0:NO_EVENT, 1:SINGLE_CLICK)
   uint8_t button2_event; // 第二個按鈕觸發的事件類型 (0:NO_EVENT, 1:SINGLE_CLICK)
+  int8_t propeller;     // 螺旋槳值 (-90 到 90)
 } rotary_message;
 
 // ACK封包結構體 - 用於發送確認和RSSI值
@@ -132,6 +133,23 @@ unsigned long switchModeStartTime = 0; // 切換模式開始時間
 // 按鈕事件檢測相關變量
 ButtonEventType currentButtonEvent = NO_EVENT; // 當前檢測到的按鈕事件
 ButtonEventType currentButton2Event = NO_EVENT; // 第二個按鈕事件
+
+// 螺旋槳模式相關變量
+bool propellerMode = false;           // 是否處於螺旋槳模式
+int8_t propellerValue = 0;            // 螺旋槳值 (-90 到 90)
+bool propellerRampingDown = false;    // 是否正在漸減螺旋槳值
+unsigned long propellerRampStartTime = 0; // 漸減開始時間
+int8_t propellerRampStartValue = 0;   // 漸減開始值
+const unsigned long PROPELLER_RAMP_DURATION = 2000; // 漸減持續時間 (2秒)
+
+// 螺旋槳模式下凍結的編碼器值
+int frozenEncoder1Value = 0;
+int frozenEncoder1Norm = 0;
+
+// 雙擊檢測相關變量
+unsigned long lastClickTime = 0;      // 上次點擊時間
+bool waitingForDoubleClick = false;   // 是否等待第二次點擊
+const unsigned long DOUBLE_CLICK_TIMEOUT = 500; // 雙擊超時時間 (500ms)
 #endif
 
 #ifdef DEVICE_ROLE_RECEIVER
@@ -165,6 +183,12 @@ Servo steeringServo2;             // 第二個伺服馬達對象
 #define SERVO2_PIN D7                   // 第二個伺服馬達連接到D7
 int lastServoAngle = 90;               // 上次的第一個伺服馬達角度
 int lastServoAngle2 = 90;              // 上次的第二個伺服馬達角度
+
+// DRV8833螺旋槳馬達控制
+#define MOTOR1_PIN1 D3                 // 馬達1正轉
+#define MOTOR1_PIN2 D4                 // 馬達1反轉
+#define MOTOR2_PIN1 D5                 // 馬達2正轉
+#define MOTOR2_PIN2 D6                 // 馬達2反轉
 #endif
 
 // ===== 兩者共用的變數 =====
@@ -328,12 +352,8 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
            mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
 
   if (status == ESP_NOW_SEND_SUCCESS) {
-    Serial.print("Message sent successfully to: ");
-    Serial.println(macStr);
     retryCount = 0; // 成功後重置重試計數器
   } else {
-    Serial.print("Failed to send message to: ");
-    Serial.println(macStr);
 
     // 重試邏輯
     if (retryCount < MAX_RETRY_COUNT) {
@@ -357,13 +377,7 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
   snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
            mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
 
-  if (status == ESP_NOW_SEND_SUCCESS) {
-    Serial.print("ACK sent successfully to: ");
-    Serial.println(macStr);
-  } else {
-    Serial.print("Failed to send ACK to: ");
-    Serial.println(macStr);
-  }
+  // ACK send status (removed verbose logging)
   #endif
 }
 
@@ -415,6 +429,48 @@ void controlServos(int value1, int value2) {
     // 調試輸出
     Serial.print("Servo 2 angle: ");
     Serial.println(servoAngle2);
+  }
+  #endif
+}
+
+// 控制螺旋槳馬達
+void controlPropeller(int8_t propellerValue) {
+  #ifdef DEVICE_ROLE_RECEIVER
+  // 螺旋槳值範圍 -90 到 90
+  // 0 = 停止，正值 = 前進，負值 = 後退
+  
+  if (propellerValue == 0) {
+    // 停止所有馬達
+    analogWrite(MOTOR1_PIN1, 0);
+    analogWrite(MOTOR1_PIN2, 0);
+    analogWrite(MOTOR2_PIN1, 0);
+    analogWrite(MOTOR2_PIN2, 0);
+  } else if (propellerValue > 0) {
+    // 前進：兩個馬達都向前轉
+    int pwmValue = map(propellerValue, 0, 90, 0, 255);
+    analogWrite(MOTOR1_PIN1, pwmValue);
+    analogWrite(MOTOR1_PIN2, 0);
+    analogWrite(MOTOR2_PIN1, pwmValue);
+    analogWrite(MOTOR2_PIN2, 0);
+    
+    Serial.print("Propeller forward: ");
+    Serial.print(propellerValue);
+    Serial.print(" (PWM: ");
+    Serial.print(pwmValue);
+    Serial.println(")");
+  } else {
+    // 後退：兩個馬達都向後轉
+    int pwmValue = map(-propellerValue, 0, 90, 0, 255);
+    analogWrite(MOTOR1_PIN1, 0);
+    analogWrite(MOTOR1_PIN2, pwmValue);
+    analogWrite(MOTOR2_PIN1, 0);
+    analogWrite(MOTOR2_PIN2, pwmValue);
+    
+    Serial.print("Propeller reverse: ");
+    Serial.print(propellerValue);
+    Serial.print(" (PWM: ");
+    Serial.print(pwmValue);
+    Serial.println(")");
   }
   #endif
 }
@@ -581,10 +637,16 @@ void updateSenderOLED() {
 
   char buffer[32];
 
-  // 顯示旋轉編碼器值
-  sprintf(buffer, "Enc1:%d Enc2:%d",
-          rotaryData.encoder1_norm,
-          rotaryData.encoder2_norm);
+  // 顯示旋轉編碼器值或螺旋槳值
+  if (propellerMode) {
+    sprintf(buffer, "PROP:%d Enc2:%d",
+            rotaryData.propeller,
+            rotaryData.encoder2_norm);
+  } else {
+    sprintf(buffer, "Enc1:%d Enc2:%d",
+            rotaryData.encoder1_norm,
+            rotaryData.encoder2_norm);
+  }
   u8g2.drawStr(0, 24, buffer);
 
   // 顯示最後發送狀態
@@ -647,9 +709,20 @@ void handleRotaryEncoders() {
   // 讀取第一個旋轉編碼器
   int rawValue1 = rotaryEncoder.readEncoder();
 
-  // 設置第一個編碼器的值
-  rotaryData.encoder1_value = rawValue1;
-  rotaryData.encoder1_norm = rawValue1;
+  if (propellerMode || propellerRampingDown) {
+    // 螺旋槳模式或漸減期間：編碼器值保持凍結
+    if (propellerMode && !propellerRampingDown) {
+      // 只有在螺旋槳模式且不在漸減時才從編碼器讀取螺旋槳值
+      propellerValue = constrain(rawValue1, -90, 90);
+    }
+    // 螺旋槳值在漸減時由主循環處理
+    rotaryData.encoder1_value = frozenEncoder1Value;
+    rotaryData.encoder1_norm = frozenEncoder1Norm;
+  } else {
+    // 正常模式：編碼器1控制普通值
+    rotaryData.encoder1_value = rawValue1;
+    rotaryData.encoder1_norm = rawValue1;
+  }
 
   // 讀取第二個旋轉編碼器
   int rawValue2 = rotaryEncoder2.readEncoder();
@@ -661,6 +734,9 @@ void handleRotaryEncoders() {
   // 讀取當前按鈕狀態
   rotaryData.button_state = rotaryEncoder.isEncoderButtonDown();
   rotaryData.button2_state = rotaryEncoder2.isEncoderButtonDown();
+  
+  // 設置螺旋槳值
+  rotaryData.propeller = propellerValue;
   #endif
 }
 
@@ -689,15 +765,7 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int data_l
       ackReceived[receiverIndex] = true;
       lastAckTime[receiverIndex] = millis();
       
-      Serial.print("Received ACK from ");
-      Serial.print(receiverNames[receiverIndex]);
-      Serial.print(" for message ID: ");
-      Serial.println(tempAck.ack_id);
-      Serial.print("RSSI: ");
-      Serial.print(tempAck.rssi);
-      Serial.print(" dBm (");
-      Serial.print(rssiToSignalStrength(tempAck.rssi));
-      Serial.println("%)");
+      // ACK received (removed verbose logging)
     } else {
       Serial.println("Received ACK from unknown receiver");
     }
@@ -709,10 +777,6 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int data_l
   // 接收端處理邏輯
   // 獲取RSSI值 (訊號強度)
   int receivedRSSI = info->rx_ctrl->rssi;
-  Serial.print("RSSI: ");
-  Serial.print(receivedRSSI);
-  Serial.println(" dBm");
-
   lastRSSI = receivedRSSI;
 
   // 更新最大最小RSSI值
@@ -750,26 +814,11 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int data_l
 
     // 控制伺服馬達
     controlServos(rotaryData.encoder1_norm, rotaryData.encoder2_norm);
+    
+    // 控制螺旋槳馬達
+    controlPropeller(rotaryData.propeller);
 
-    // 輸出接收到的數據
-    Serial.print("Bytes received: ");
-    Serial.print(data_len);
-    Serial.print(", Msg ID: ");
-    Serial.println(rotaryData.msg_id);
-
-    // 顯示接收的數據
-    Serial.print("Received data - Encoder1: ");
-    Serial.print(rotaryData.encoder1_norm);
-    Serial.print(", Encoder2: ");
-    Serial.print(rotaryData.encoder2_norm);
-    Serial.print(", Button1: ");
-    Serial.print(rotaryData.button_state ? "Pressed" : "Released");
-    Serial.print(", Button2: ");
-    Serial.print(rotaryData.button2_state ? "Pressed" : "Released");
-    Serial.print(", Event: ");
-    Serial.print(rotaryData.button_event);
-    Serial.print(", ID: ");
-    Serial.println(rotaryData.msg_id);
+    // Data received (removed verbose logging)
 
     // 處理按鈕事件
     ButtonEventType receivedEvent = (ButtonEventType)rotaryData.button_event;
@@ -842,6 +891,7 @@ void setup() {
   rotaryEncoder.setBoundaries(ROTARY_MIN_VALUE, ROTARY_MAX_VALUE, false); // 不循環
   rotaryEncoder.setAcceleration(50); // 設置加速度
   rotaryEncoder.setEncoderValue(ROTARY_INITIAL_VALUE);
+  // 長按檢測將使用自定義邏輯實現
 
   // 初始化第二個旋轉編碼器
   rotaryEncoder2.begin();
@@ -865,7 +915,16 @@ void setup() {
   steeringServo2.write(90); // 初始位置居中
   lastServoAngle2 = 90;
 
-  Serial.println("Both servos initialized at center position (90°)");
+  // 初始化螺旋槳馬達控制引腳
+  pinMode(MOTOR1_PIN1, OUTPUT);
+  pinMode(MOTOR1_PIN2, OUTPUT);
+  pinMode(MOTOR2_PIN1, OUTPUT);
+  pinMode(MOTOR2_PIN2, OUTPUT);
+  
+  // 確保馬達初始時停止
+  controlPropeller(0);
+
+  Serial.println("Both servos initialized at center position (90°), propeller motors initialized");
   #endif
 
   // 初始化OLED
@@ -995,11 +1054,68 @@ void loop() {
   }
 
   #ifdef DEVICE_ROLE_SENDER
+  // 處理螺旋槳漸減邏輯
+  if (propellerRampingDown) {
+    unsigned long elapsedTime = millis() - propellerRampStartTime;
+    if (elapsedTime >= PROPELLER_RAMP_DURATION) {
+      // 漸減完成，恢復編碼器位置
+      propellerValue = 0;
+      propellerRampingDown = false;
+      rotaryEncoder.setEncoderValue(frozenEncoder1Value);
+      Serial.println("Propeller ramp down completed, encoder position restored");
+    } else {
+      // 計算當前漸減值
+      float progress = (float)elapsedTime / PROPELLER_RAMP_DURATION;
+      propellerValue = propellerRampStartValue * (1.0 - progress);
+    }
+  }
+  
   // 處理旋轉編碼器數據
   handleRotaryEncoders();
 
-  // 檢測按鈕點擊事件（庫已處理debounce和完整點擊檢測）
+  // 雙擊檢測邏輯
   if (rotaryEncoder.isEncoderButtonClicked()) {
+    unsigned long currentTime = millis();
+    
+    if (waitingForDoubleClick && (currentTime - lastClickTime <= DOUBLE_CLICK_TIMEOUT)) {
+      // 雙擊事件
+      waitingForDoubleClick = false;
+      
+      if (propellerMode) {
+        // 退出螺旋槳模式，開始漸減
+        propellerMode = false;
+        propellerRampingDown = true;
+        propellerRampStartTime = millis();
+        propellerRampStartValue = propellerValue;
+        Serial.println("Exiting propeller mode - ramping down");
+      } else {
+        // 進入螺旋槳模式
+        propellerMode = true;
+        propellerValue = 0;
+        propellerRampingDown = false;
+        // 凍結當前編碼器值
+        frozenEncoder1Value = rotaryData.encoder1_value;
+        frozenEncoder1Norm = rotaryData.encoder1_norm;
+        // 將編碼器位置設為0以開始螺旋槳控制
+        rotaryEncoder.setEncoderValue(0);
+        Serial.println("Entering propeller mode");
+      }
+    } else {
+      // 第一次點擊，開始等待雙擊
+      waitingForDoubleClick = true;
+      lastClickTime = currentTime;
+    }
+  }
+  
+  // 檢查雙擊超時
+  if (waitingForDoubleClick && (millis() - lastClickTime > DOUBLE_CLICK_TIMEOUT)) {
+    // 單擊事件（雙擊超時）
+    waitingForDoubleClick = false;
+    
+    if (propellerMode) {
+      propellerValue = 0;
+      Serial.println("Propeller value reset to 0");
+    }
     currentButtonEvent = SINGLE_CLICK;
   }
 
@@ -1073,12 +1189,13 @@ void loop() {
     Serial.println("Data reception timed out!");
     dataReceived = false;
 
-    // 數據超時時將兩個伺服都重置到中心位置
+    // 數據超時時將兩個伺服都重置到中心位置，螺旋槳停止
     steeringServo.write(90);
     steeringServo2.write(90);
     lastServoAngle = 90;
     lastServoAngle2 = 90;
-    Serial.println("Timeout - Both servos reset to center position");
+    controlPropeller(0); // 停止螺旋槳
+    Serial.println("Timeout - Both servos reset to center position, propeller stopped");
   }
   #endif
 
