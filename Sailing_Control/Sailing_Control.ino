@@ -1000,6 +1000,10 @@ void loop() {
 
   // 檢測按鈕點擊事件（庫已處理debounce和完整點擊檢測）
   if (rotaryEncoder.isEncoderButtonClicked()) {
+    currentButtonEvent = SINGLE_CLICK;
+  }
+
+  if (rotaryEncoder2.isEncoderButtonClicked()) {
     // 處理接收端切換邏輯
     if (receiverSwitchMode) {
       // 在切換模式中，切換到下一個接收端
@@ -1013,10 +1017,6 @@ void loop() {
       switchModeStartTime = millis();
       Serial.println("Entering receiver switch mode");
     }
-    currentButtonEvent = SINGLE_CLICK;
-  }
-
-  if (rotaryEncoder2.isEncoderButtonClicked()) {
     currentButton2Event = SINGLE_CLICK;
     Serial.println("Button2 Event: SINGLE_CLICK");
   }
